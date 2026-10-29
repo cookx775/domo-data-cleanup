@@ -1,0 +1,328 @@
+# The canonical governance-report manifest. Ticket 15.
+#
+# The collector's queries are BUILT from this file, and `collector/tests/test_drift.py`
+# asserts in both directions that every column any query references appears in that
+# report's `read` set and that every `read` column is referenced by some query. Without
+# that test the manifest silently rots and discovery starts validating a shape the
+# collector no longer reads.
+#
+# Report keys are canonical here; `shared/dataset_registry.yaml` follows them. Note the
+# key is `datasets`, not `datasets_inventory`.
+#
+# `identify` is what discovery matches on — deliberately ~3 columns, measured to be
+# exactly as precise as the full read set once the confidence tier applies. Every column
+# in it is a column a connector release can drop, so it is kept small.
+#
+# `read` is every column the collector actually reads. Validated against the match and
+# reported MISSING BY NAME rather than by yielding no candidate: an admin must see
+# "found it, it is missing Execution Success Count", never "nothing found".
+#
+# `nullable` names the columns whose SQL NULL is meaningful. They MUST be read through the
+# `{?Column}` / `{~Column}` placeholders, because this query surface serializes NULL as ""
+# and the reader cannot otherwise tell absence from an empty string. Enforced by the drift
+# test and, at run time, by `shared.typed` raising AmbiguousValueError.
+
+version: "1.0"
+
+# Excluded from every column fingerprint: the connector injects these into every report it
+# publishes, so they carry no identifying information.
+ignore_columns: [_BATCH_ID_, _BATCH_LAST_RUN_]
+
+# Deliberately NOT in the roster: `dataflow_history` and `datasets_history`. Ticket 05
+# moved run counts into `Dataflow Details`, so the two 1.3M-row LONG-keyed tables have no
+# remaining consumer — and they are exactly where the 1,000,000-row silent truncation bites.
+
+reports:
+
+  dataflow_details:
+    name_hint: "DOMO | Dataflow Details"
+    connector: domo_governance
+    provider_prefix: domo-governance
+    floor: true                 # a missing floor report is a hard prerequisite failure
+    grain: "one row per dataflow x input-edge x output-edge"
+    if_missing: "the run aborts"
+    # `duplicated` reads THREE things from this report and nothing else: `Input Dataset ID`
+    # (the producer's input dataset-id set), `Database ProcessingType` (engine) and
+    # `Output Dataset ID`. All three are already in the read set below — the condition added
+    # no column, no query and no report. Its fourth axis, the outputs' typed column sets,
+    # comes from `datasources/search`, which is not a governance report and so has no entry
+    # in this manifest; see `shared/schemas.py`.
+    conditions: [unconsumed, stale, failing, duplicated]
+    purpose: >
+      The dataflow grain entire: engine, real lineage edges, run and failure counts,
+      enabled, draft. The report carries BOTH dataflow identifier spaces: `Dataflow ID`
+      is the numeric id that matches the UI URL and `DAP Dataflow ID` the Governance UUID,
+      so the two join directly and a dataflow finding can carry a constructed deep link
+      (tickets 19, 35, 44). `DAP Dataflow ID` is read only as a guard on that link.
+
+      `Execute on Update` is deliberately NOT read, and its name is better than the
+      column: it is a legacy per-INPUT-EDGE flag, never the flow's trigger model, and on
+      granite it is accurate at the flow grain by coincidence rather than by construction.
+      Do not reach for it as a free dataflow-cadence or schedule signal. The census and
+      the three measured reasons are in the trailing note at the end of this block
+      (ticket 73).
+
+      `Number of Inputs` is deliberately NOT read. One bounded aggregate over all 374
+      granite dataflows found that 355 declarations agree with the distinct input-edge
+      count, while the remaining 19 all declare 1 over zero observed input ids - exactly
+      the no-input population the product read in ticket 73 reported as `inputs: []`.
+      `inputs_observed` remains derived from the edge rows; the declared count is neither
+      an authority nor a fallback (ticket 85).
+
+      `Run State` is the product's `paused` flag under another name, measured 2026-09-04:
+      the 15 rows reading DISABLED are exactly the 15 dataflows the product reports
+      `paused: true`, and `Enabled` alone is NOT that set - it reads false for the 11 DRAFT
+      rows as well. Domo's own `abandoned` and `neverAbandon` are on no aggregate surface at
+      all: no report in this manifest carries an abandon- or pause-named column, and neither
+      does any of granite's 2,205 datasets. So the one abandonment flag that varies on the
+      reference instance is already read here, and the two that do not vary stay unread
+      (ticket 74, ADR-0004 amendment (f)).
+    identify: [Dataflow ID, Database ProcessingType, Output Dataset ID]
+    read:
+      - Dataflow ID
+      - DAP Dataflow ID
+      - Name
+      - Database ProcessingType
+      - Owner ID
+      - Owner
+      - Run State
+      - Enabled
+      - Draft
+      - Last Execution Begin Time
+      - Last Execution Failed
+      - Last Execution State
+      - Execution Count
+      - Execution Success Count
+      - Number of Outputs
+      - Input Dataset ID
+      - Output Dataset ID
+      - Output Dataset Name
+    nullable:
+      # `Execution Count` absent vs '0' is the whole population filter: absent means the
+      # object does not execute (granite: 3 DATAFUSION), '0' means it executes and never
+      # has (granite: 18, real findings). A PRESENT value counts the executions Domo still
+      # RETAINS (rolling ~6-month window plus the 50 most recent regardless of age), never
+      # lifetime executions — the collector ships it as `executions_retained` (ticket 33).
+      - Execution Count
+      - Execution Success Count
+      - Last Execution Begin Time
+      - Last Execution State
+      - Last Execution Failed
+      - Number of Outputs
+      # Absent on the rows whose `Dataflow ID` is a UUID rather than a number - on granite
+      # the same three DataFusions. Absent here means NO deep link, never a guessed one.
+      - DAP Dataflow ID
+      - Run State
+      - Draft
+      - Enabled
+      - Input Dataset ID
+      - Output Dataset ID
+      - Output Dataset Name
+      - Owner ID
+      - Owner
+      - Database ProcessingType
+    # ---------------------------------------------------------------------------------
+    # DELIBERATELY NOT IN THE READ SET: `Execute on Update`.
+    #
+    # Ticket 73, re-measured 2026-09-04 over ALL 371 granite dataflows against
+    # `dataprocessing/v1/dataflows/{id}` (371/371 HTTP 200, 204.5s) and all 1,812 rows of
+    # this report. The column is an INPUT-EDGE property — it sits between `Input Dataset
+    # Name` and `Output Dataset ID` in the report's 35 columns — and it is the LEGACY
+    # spelling of the trigger. The product's model is
+    # `triggerSettings.triggers[].triggerEvents[]`, of exactly two kinds, partitioning
+    # granite 149 no-trigger / 163 DATASET_UPDATED / 59 SCHEDULE (ticket 56).
+    #
+    # Three measured reasons it is neither a trigger nor a cadence fact:
+    #   1. `false` COLLAPSES THREE STATES. All 59 time-scheduled dataflows read no `true`
+    #      here, and so do all 149 with no trigger at all. So it can never say that a
+    #      dataflow runs on a clock, which is the one thing a schedule proxy is wanted
+    #      for; conflating those is ADR-0003's hazard at the column's own grain.
+    #   2. It is ONE-WAY WRONG against the product's own copy of the same per-input flag.
+    #      Of 1,281 edges comparable on both sides, 1,105 agree, 176 read `true` here
+    #      while the product reports that input `false`, and ZERO run the other way.
+    #      101 dataflows over-report at the flow grain (19, 136, 155, 157, 224 among
+    #      them), 5 more are ambiguous because the product's own flag is absent. So a
+    #      `true` is a claim about the past, never about now.
+    #   3. It is STRUCTURALLY BLIND with no input edge to carry: 7 of the 163
+    #      dataset-triggered dataflows sit among the 19 the product reports with
+    #      `inputs: []`, and those same 7 are exactly the 7 that read no `true` here.
+    #
+    # And the trap, which is why this note is long. At the FLOW grain on granite the
+    # column looks EXCELLENT: `any edge true` implies DATASET_UPDATED at precision 1.000
+    # (zero false positives over all 371) and recall 0.957 (156 of 163). Validating it
+    # against this instance would pass. It is right by coincidence of granite's migration
+    # state, and it and the product payload are two legacy views of ONE object — so their
+    # agreement is not evidence (ADR-0004 amendment b). Ticket 73's inherited figures
+    # (113 under-reported, 5 over-reported) did NOT reproduce: 113 is the product's own
+    # `executeFlowWhenUpdated`, not this column, and the dataflow-184 example is wrong —
+    # its trigger dataset IS its third input and this column flags exactly that edge.
+    #
+    # It is also nullable, and its absence splits the way `Execution Count`'s does: 490 of
+    # 1,812 rows absent, 483 of them rows whose `Input Dataset ID` is absent too and the
+    # remaining 7 EXACTLY the DATAFUSION rows — the same 7 that carry no run history.
+    # Meanwhile 19 rows read a present `false` while carrying NO input id at all, which is
+    # reason 1's collapse showing up inside a single row. Anything that adds this column
+    # to `read` owes it a `nullable` entry and the `{?Execute on Update}` placeholder
+    # (ADR-0003), and owes this note a re-measurement.
+    # `collector/tests/test_execute_on_update.py` fails if the column enters `read` or
+    # `identify`, if a collector module starts reading it, or if this note and the
+    # `purpose` above stop saying so.
+    # ---------------------------------------------------------------------------------
+
+  datasets:
+    name_hint: "GP |Domostats | DataSets"     # sic — missing space after GP on granite
+    connector: domostats
+    provider_prefix: domostats
+    floor: true
+    grain: "one row per dataset"
+    if_missing: "the run aborts"
+    # `duplicated` at the OUTPUT grain scores dataset assets, so this report supplies their
+    # identity, owner and link. The test itself reads no column from here.
+    conditions: [unconsumed, stale, failing, duplicated]
+    purpose: >
+      Dataset identity, Last_Run_Date, Cards_Powered and Link. Reports rowCount 0 in
+      dataset-search metadata while being fully populated, which is why discovery probes
+      by query and never ranks on rowCount.
+    identify: [ID, Cards_Powered, Import_Type]
+    read:
+      - ID
+      - Name
+      - Link
+      - Owner_User_ID
+      - Created_Date
+      - Last_Run_Date
+      - Status
+      - Schedule
+      - Import_Type
+      - Data_Provider
+      - Cards_Powered
+    nullable:
+      # `Status` is a LAST-RUN STATE here, not a lifecycle state, and 597 of 2,205 rows are
+      # absent. `Status != 'DELETED'` silently drops all 597 — see ADR-0003.
+      - Status
+      - Last_Run_Date
+      - Cards_Powered
+      - Schedule
+      - Import_Type
+      - Data_Provider
+      - Owner_User_ID
+      - Link
+      - Created_Date
+
+  cards_and_datasets:
+    name_hint: "DOMO | Cards and Datasets"
+    connector: domo_governance
+    provider_prefix: domo-governance
+    floor: false
+    grain: "one row per card x dataset"
+    if_missing: "no dataset is tested for `unconsumed` at all"
+    conditions: [unconsumed]
+    purpose: >
+      The real card->dataset linkage. `Cards_Powered` alone is an unreliable consumption
+      signal (ticket 02): 1,674 cards carry no Dataset ID. `Page ID` is read only for the
+      placement FLOOR `cards_with_no_page_recorded` - it over-reports placement (ticket 24:
+      stale positives, a sentinel negative range), so it can prove a card is on no page and
+      never that it is on one. The floor counts a card with no POSITIVE id on any of its
+      rows, absent or sentinel alike (ticket 58), and the query carries a guard column that
+      makes the loader raise on a card state neither population was measured on.
+    identify: [Card ID, Dataset ID, Page ID]
+    read: [Card ID, Title, Card Type, Owner User ID, Page ID, Dataset ID, Dataset Name]
+    nullable: [Page ID, Dataset ID, Dataset Name, Owner User ID, Card Type, Title]
+
+  credit_usage:
+    name_hint: "GP | Datastats | Credit Usage"
+    connector: domostats
+    provider_prefix: domostats
+    floor: false
+    grain: "domain x date x skuId x entityType x entityId"
+    if_missing: "cost falls back to `usage_metrics`; only losing BOTH loses cost"
+    conditions: []              # feeds cost, which ranks every condition's candidates
+    purpose: >
+      Metered cost in CREDITS — the `metered-credits` basis. For an `executions-dataflow-*`
+      skuId the entity is the OUTPUT DATASET, joining to Dataflow Details.`Output Dataset
+      ID`; each output of a multi-output dataflow bills independently at the same execution
+      count.
+
+      CUSTOMER-LEVEL, not per-instance: granite's copy carries 12 domains under 12 distinct
+      `instanceId`s, because it is held by the instance holding the contract. A subsidiary
+      almost certainly cannot produce one, which is why `usage_metrics` below exists and why
+      this report is not floor. Absent => the run falls back to `usage_metrics` and reports
+      in executions; absent BOTH => no cost figures at all. See ticket 20.
+    identify: [skuId, entityId, creditsUsed]
+    read: [domain, date, skuGroup, skuId, entityType, entityId, usageQuantity, category, creditsUsed]
+    nullable: [entityId, entityType, category, skuGroup, domain, usageQuantity]
+
+  usage_metrics:
+    name_hint: "GP | DomoStats | Usage Metrics"
+    connector: domostats
+    provider_prefix: domostats
+    floor: false
+    grain: "date x SKU x entityType x entityId"
+    if_missing: "cost falls back to `credit_usage`; only losing BOTH loses cost"
+    conditions: []              # feeds cost, same as credit_usage
+    purpose: >
+      The PER-INSTANCE meter — `Credit Usage` minus the credit conversion, and the one half
+      of the cost pair every instance in the portfolio has. Same grain, same entity ids,
+      byte-identical quantities in-window on both granite and Altimate (ticket 20). Feeds
+      the `metered-executions` basis: the recurring figure is executions per month, never
+      converted to credits.
+
+      Two things it does NOT carry, both of which shape `cost.py`. There is no `domain`
+      column — it is single-instance by construction — so no code path may assume a domain
+      predicate is available on whichever meter it found. And there is no `category`: the
+      legacy/standard split is simply gone (it moves the credit RATE, and there is no rate),
+      while `manual` survives only as a ` (Manual)` suffix on the SKU display name.
+
+      `SKU` here is a DISPLAY NAME (`Magic ETL v2 DataFlow Execution`), not a skuId, so the
+      saving-term patterns are a separate config key from `credit_usage`'s.
+
+      Its columns are DISJOINT from `credit_usage`'s, so the ticket-15 fingerprint separates
+      the two on shape alone — which matters because they come from the same connector and
+      tie on the confidence tier. `test_drift.py` asserts that disjointness rather than
+      trusting it.
+    identify: [SKU, Entity ID, Usage Quantity]
+    read: [Date, SKU, Entity Type, Entity ID, Usage Unit, Usage Quantity]
+    nullable:
+      # `Usage Unit` is the discriminator between a FLOW and a STOCK — `Executions` sums
+      # over the window, `Rows` is the same stock reported every day and must be averaged.
+      # Reading it absent would silently sum 90 daily row-counts into a row-day figure.
+      - Entity Type
+      - Usage Unit
+      - Usage Quantity
+      - Entity ID
+
+  people:
+    name_hint: "GP | Domostats | People"
+    connector: domostats
+    provider_prefix: domostats
+    floor: false                # NEVER floor: Altimate's People replicas are already
+                                # known to be empty, and a floor here would block the one
+                                # instance the package exists for
+    grain: "one row per user"
+    if_missing: "owner attribution degrades; nothing else does"
+    conditions: []              # ticket 08's owner-departed stratum is a review input
+    purpose: >
+      Owner attribution and the owner-departed review stratum. A review input rather than
+      a condition, so its absence degrades the review protocol and nothing else.
+    identify: [User ID, Last Login, Role]
+    read: [User ID, Display Name, Email, Role, Last Login, Account Locked, Department, Title]
+    nullable: [Last Login, Email, Department, Title, Role, Account Locked, Display Name]
+
+  activity_log:
+    name_hint: "GP | Domostats | Activity Log"
+    connector: domostats
+    provider_prefix: domostats
+    floor: false
+    grain: "one row per audit event"
+    if_missing: "pause actor/time evidence is unavailable; candidate scoring and actions do not change"
+    conditions: []              # evidence only; never membership, rank or recommendation
+    purpose: >
+      Optional actor/time context for a dataflow whose current `Run State` is `DISABLED`.
+      The current Dataflow Details snapshot remains authoritative. The latest matching event
+      may corroborate it, be absent, or conflict by reading `ENABLED`; every state is carried
+      explicitly and none changes candidate membership or recommended action. `DISABLED` and
+      `ENABLED` are the two values observed on granite, not a claim that Domo's 135-action
+      vocabulary is complete (ticket 87).
+    identify: [Action, Object_Type, Object_ID]
+    read: [User_ID, Name, Action, Object_Type, Object_ID, Event_Time, Event_ID]
+    nullable: [User_ID, Name, Action, Object_Type, Object_ID, Event_Time, Event_ID]

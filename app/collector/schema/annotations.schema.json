@@ -1,0 +1,192 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://granite.internal/domo-instance-administration/annotations.schema.json",
+ "title": "Agent layer annotations",
+ "description": "What comes BACK from the agent layer. Strictly additive to findings.json and keyed by candidate_id (ADR-0001, prompts/CONTRACT.md). This schema exists because CONTRACT.md's rejection rule says 'any field the schema does not define', which presupposes a schema a reader can open. It is the UNION of what the four shipped prompts emit, not the shape of any one of them: `purpose-inference` returns `annotations`, `redundancy` and `grouping` return `groups`, `narrative` returns `narrative`, and each is a complete, valid document on its own. Nothing merges them - merging is report shape (ticket 25) and is not decided.",
+ "oneOf": [
+  {
+   "$ref": "#/$defs/annotation_document"
+  },
+  {
+   "$ref": "#/$defs/error_document"
+  }
+ ],
+ "$defs": {
+  "candidate_id": {
+   "type": "string",
+   "description": "The findings file's own key, verbatim. The pattern is COPIED from findings.schema.json rather than loosened, so an annotation cannot name an asset class or a condition the collector does not score. `TestConditionVocabularyIsOneList` polices both copies against the pillar and the ledger regex.",
+   "pattern": "^(dataset|dataflow|card|page|app|user):[^:]+:(orphaned|stale|failing|unconsumed|duplicated|low-reach|inactive)$"
+  },
+  "confidence": {
+   "type": "string",
+   "description": "The four values `_SHARED.md` defines. An honest `unknown` is worth more than a confident guess, because a human is about to delete something based on this.",
+   "enum": [
+    "confirmed",
+    "documented",
+    "inferred",
+    "unknown"
+   ]
+  },
+  "error_document": {
+   "type": "object",
+   "description": "What `_SHARED.md` instructs a model to emit when its input is truncated or malformed. A distinct document KIND rather than a rejected annotation file: the layer worked exactly as designed and declined to annotate a partial document, which is a different event from a model returning something invalid, and the validator says so. Without this branch it would be reported as an undefined field, which is precisely the wrong diagnosis.",
+   "required": [
+    "error"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "error": {
+     "type": "string"
+    }
+   }
+  },
+  "annotation_document": {
+   "type": "object",
+   "description": "Three provenance fields plus whichever of the three payloads the prompt that produced it emits. At least one payload must be present - a document carrying provenance and nothing else is a runtime that failed silently, and silence is the one outcome that must not validate.",
+   "required": [
+    "run_id",
+    "runtime",
+    "generated_at"
+   ],
+   "anyOf": [
+    {
+     "required": [
+      "annotations"
+     ]
+    },
+    {
+     "required": [
+      "groups"
+     ]
+    },
+    {
+     "required": [
+      "narrative"
+     ]
+    }
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "run_id": {
+     "type": "string",
+     "description": "Copied verbatim from the input's `run.run_id`. A mismatch is rejected on load: annotations describing one run attached to another are worse than no annotations, because nothing downstream can see the mistake."
+    },
+    "runtime": {
+     "type": "string",
+     "description": "Free text: which model or product produced this. The layer is portable across runtimes by design (ADR-0001), so the artifact records which one actually ran rather than assuming."
+    },
+    "generated_at": {
+     "type": "string",
+     "format": "date-time"
+    },
+    "annotations": {
+     "type": "object",
+     "description": "From `purpose-inference`. Keyed by candidate_id and carrying no findings data of its own.",
+     "propertyNames": {
+      "$ref": "#/$defs/candidate_id"
+     },
+     "additionalProperties": {
+      "type": "object",
+      "required": [
+       "purpose",
+       "purpose_confidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "purpose": {
+        "type": "string"
+       },
+       "purpose_confidence": {
+        "$ref": "#/$defs/confidence"
+       },
+       "explanation": {
+        "type": "string"
+       },
+       "concerns": {
+        "type": "array",
+        "description": "Where a model that believes a candidate is WRONG says so. The only path: it may not suppress, re-rank or act on that belief, and a human records the verdict.",
+        "items": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    "groups": {
+     "type": "array",
+     "description": "From `redundancy` (which adds `also_involves`) and from `grouping` (which adds `decision_framing`). One array shape covers both because a reader of the merged report should not have to know which prompt produced a group.",
+     "items": {
+      "type": "object",
+      "required": [
+       "group_id",
+       "label",
+       "rationale",
+       "candidate_ids"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "group_id": {
+        "type": "string"
+       },
+       "label": {
+        "type": "string"
+       },
+       "rationale": {
+        "type": "string"
+       },
+       "confidence": {
+        "$ref": "#/$defs/confidence"
+       },
+       "candidate_ids": {
+        "type": "array",
+        "items": {
+         "$ref": "#/$defs/candidate_id"
+        }
+       },
+       "also_involves": {
+        "type": "array",
+        "description": "Asset NAMES, not candidate ids, and deliberately NOT validated against the findings file. `redundancy.md` designs this field to name an asset the collector did not flag - the twin a human should look at. Checking it against the candidate set would reject exactly the value it exists to carry. It stays a note for a human and never becomes a candidate, which is what keeps it inside ADR-0001's additive-only boundary.",
+        "items": {
+         "type": "string"
+        }
+       },
+       "decision_framing": {
+        "type": "string",
+        "description": "From `grouping`: the single question a reviewer should be asked about this group. The point of that prompt - a question, not a summary."
+       }
+      }
+     }
+    },
+    "narrative": {
+     "type": "object",
+     "description": "From `narrative`. The one payload that is prose rather than structure, and the thing a person actually reads first. Absent from CONTRACT.md's original example, which is why a validator built from that example alone would have rejected a correct file.",
+     "required": [
+      "headline",
+      "summary"
+     ],
+     "additionalProperties": false,
+     "properties": {
+      "headline": {
+       "type": "string"
+      },
+      "summary": {
+       "type": "string"
+      },
+      "first_actions": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "caveats": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

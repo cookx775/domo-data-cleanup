@@ -1,0 +1,2659 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://granite.internal/domo-instance-administration/findings.schema.json",
+ "title": "Instance cleanup findings",
+ "description": "The artifact of record. Produced entirely by deterministic code. Two runs over identical data MUST produce an identical document apart from run metadata. Agent annotations live in a separate file keyed by candidate_id and never appear here. See ADR-0001.",
+ "type": "object",
+ "required": [
+  "run",
+  "coverage",
+  "candidates",
+  "reconciliation"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "run": {
+   "type": "object",
+   "required": [
+    "run_id",
+    "instance",
+    "started_at",
+    "as_of_date",
+    "collector_version",
+    "config_version",
+    "window"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "run_id": {
+     "type": "string",
+     "description": "Stable identifier for this run; used by the change report to diff against the prior run."
+    },
+    "instance": {
+     "type": "string",
+     "description": "Instance key - the directory name under instances/."
+    },
+    "domain": {
+     "type": "string"
+    },
+    "started_at": {
+     "type": "string",
+     "format": "date-time"
+    },
+    "as_of_date": {
+     "type": "string",
+     "format": "date",
+     "description": "The run's single reference DATE, UTC (ticket 26). Every `days_stale` in this document is `as_of_date - last_run.date()`, the cost window ends on it, `run_id` carries it, and every ledger suppression is evaluated against it. `started_at` is an instant and differs between two runs on the same day; this does not, which is what makes two same-day runs produce the same document. Present so a reader can recompute any age from the artifact alone."
+    },
+    "collector_version": {
+     "type": "string",
+     "description": "Stamped by the build, so two findings files that disagree can be reconciled against the code that produced them."
+    },
+    "config_version": {
+     "type": "string"
+    },
+    "source": {
+     "type": "string",
+     "enum": [
+      "direct"
+     ],
+     "description": "How governance data was read. Only `direct` exists: every instance is read through its own connectors. The `*_replica` value the two-path design required was removed with that design."
+    },
+    "window": {
+     "type": "object",
+     "required": [
+      "start",
+      "end"
+     ],
+     "properties": {
+      "start": {
+       "type": "string",
+       "format": "date"
+      },
+      "end": {
+       "type": "string",
+       "format": "date"
+      }
+     },
+     "additionalProperties": false
+    },
+    "prior_run_id": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "description": "Null on a first run; drives change-first reporting."
+    }
+   }
+  },
+  "coverage": {
+   "type": "object",
+   "description": "Explicit per-pillar status. A pillar that did not run is stated, never omitted.",
+   "required": [
+    "pillars"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "population": {
+     "type": "object",
+     "description": "The population filter, which runs BEFORE any condition. An object whose run history is ABSENT does not execute by design and leaves the population entirely - `unconsumed` included, because that condition is not run-based and a rule scoped to run-based tests would have let it through. Stated here rather than inferred from a count difference, because an object silently dropped from a population is indistinguishable from one that was never there.",
+     "additionalProperties": false,
+     "properties": {
+      "filter": {
+       "type": "string",
+       "description": "The structural rule applied, e.g. 'run history absent'."
+      },
+      "excluded_count": {
+       "type": "integer"
+      },
+      "excluded_engines": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "asserted_engines": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       },
+       "description": "The object classes the config asserts are non-executing. An ASSERTION, not the filter: a mismatch raises a coverage note naming the new class rather than scoring it as an abandonment."
+      },
+      "assertion_held": {
+       "type": "boolean"
+      },
+      "excluded": {
+       "type": "array",
+       "items": {
+        "type": "object",
+        "additionalProperties": true
+       }
+      }
+     }
+    },
+    "integrity": {
+     "type": "object",
+     "description": "Declared counts cross-checked against the edge rows that should back them. A disagreement is RECORDED rather than resolved silently in favour of either side (ADR-0003 decision 4) - granite's DataFusions declare `Number of Outputs: 1` while carrying zero output-dataset rows, a present, non-zero number that is simply wrong.",
+     "additionalProperties": false,
+     "properties": {
+      "declared_vs_observed_disagreements": {
+       "type": "integer"
+      },
+      "detail": {
+       "type": "array",
+       "items": {
+        "type": "object",
+        "additionalProperties": true
+       }
+      }
+     }
+    },
+    "duplication": {
+     "type": "object",
+     "description": "Ticket 32. `duplicated` is the only condition whose saving belongs to a SET rather than to an asset, so its arithmetic is stated here rather than left for a reader to attempt. Both figures are true: `displayed_recurring` is what adding up the candidate rows gives, `realisable_recurring` is what acting on every group actually recovers, and the gap between them is the group structure rather than an error - on granite 1,320.0 against 330.0, a 4.0x that lives in the CANDIDATE LIST and not in the aggregate, which sums billed entities and so already counted each twin once. Absence applies to the condition itself: `available: false` says `duplicated` did not run at either grain, which is never the same as running and finding nothing.",
+     "required": [
+      "available"
+     ],
+     "additionalProperties": false,
+     "properties": {
+      "available": {
+       "type": "boolean",
+       "description": "False means the condition did not run at all, because no dataset enumeration was available and therefore no typed column sets. Nothing is reported rather than something reported on the two axes that remain - the shape axis is not optional. A run where the condition could not run and a run where it found no twins must never read the same."
+      },
+      "why": {
+       "type": "string",
+       "description": "Present exactly when `available` is false: which input was missing, in the reviewer's words rather than an error code."
+      },
+      "recurring_unit": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "enum": [
+        "credits_per_month",
+        "executions_per_month",
+        "rows_under_management",
+        null
+       ],
+       "description": "Unit of `displayed_recurring` and `realisable_recurring`, carried inside the block for the same reason every other cost figure carries its own: the same field holds credits on one instance and executions on the next."
+      },
+      "overstatement_factor": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "`displayed_recurring / realisable_recurring`, 2dp; null when either is zero. The factor by which a reader summing the candidate rows would overstate the opportunity. Granite: 4.0."
+      },
+      "groups_dataset": {
+       "type": "integer",
+       "description": "Twin-sets at the OUTPUT grain. Granite: 15."
+      },
+      "groups_dataflow": {
+       "type": "integer",
+       "description": "Twin-sets at the DATAFLOW grain, where every output of a dataflow is twinned by one other dataflow. Granite: 10."
+      },
+      "candidates_dataset": {
+       "type": "integer",
+       "description": "Candidates emitted at the output grain. Granite: 38 - every member of every group, because BOTH twins are candidates and nothing in the data picks the survivor."
+      },
+      "candidates_dataflow": {
+       "type": "integer",
+       "description": "Candidates emitted at the dataflow grain. Granite: 26."
+      },
+      "counted_once_at": {
+       "type": "string",
+       "description": "The grain at which the aggregate counts a group, so one opportunity is not counted once per member per grain. `dataset`: the output grain is the one that can also see a redundant output hanging off an otherwise operational dataflow."
+      },
+      "displayed_recurring": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "What summing the duplicated candidate rows gives, in `recurring_unit`. True per row and wrong as a total, which is exactly why both figures ship rather than the smaller one alone."
+      },
+      "realisable_recurring": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "What acting on every group recovers: each group keeps its MOST EXPENSIVE member and retires the rest. A FLOOR - nothing in the data picks the survivor, and overstating it would be the collector making that choice on the sly. Granite: 330.0, and every granite group is an equal-cost pair, so retaining and recovering coincide there and a fixture built from granite's shape cannot tell a correct reduction from an inverted one."
+      },
+      "unknown_outputs": {
+       "type": "array",
+       "description": "Outputs the rule could not test: MISSING DATA, not a ruling - no column schema, an absent engine. Named rather than counted, because whether an untested object matters depends on WHICH object it is and a count cannot say.",
+       "items": {
+        "type": "object",
+        "additionalProperties": true
+       }
+      },
+      "unknown_dataflows": {
+       "type": "array",
+       "description": "Dataflows where at least one output could not be tested, so `every output is twinned` cannot be established either way.",
+       "items": {
+        "type": "object",
+        "additionalProperties": true
+       }
+      },
+      "excluded_outputs": {
+       "type": "array",
+       "description": "The rule DECLINING rather than missing data: a producer with no observed input datasets has no job identity to match on. Split from `unknown_*` on purpose - missing data might be fixable on the instance, a declined rule never will be.",
+       "items": {
+        "type": "object",
+        "additionalProperties": true
+       }
+      },
+      "excluded_dataflows": {
+       "type": "array",
+       "description": "Dataflows excluded by that same rule.",
+       "items": {
+        "type": "object",
+        "additionalProperties": true
+       }
+      },
+      "enumeration": {
+       "type": "object",
+       "description": "The dataset enumeration's OWN completeness, carried beside the finding it produced. `datasources/search` is non-deterministically incomplete in two forms - a short page and a duplicated row displacing a real id - and a twin missing from a short read silently unmakes a group, so the run records what it saw rather than leaving a reader to assume 2,205 of 2,205. Deliberately open-ended: it is `search_datasets`' own stats dict, and a stat added there must not kill a run at validation.",
+       "additionalProperties": true
+      },
+      "schemas": {
+       "type": [
+        "object",
+        "null"
+       ],
+       "description": "Column-schema coverage over that enumeration - how many datasets carried a typed schema at all, which is the axis the condition cannot work without. Null when no enumeration ran. Open-ended for the same reason as `enumeration`.",
+       "additionalProperties": true
+      },
+      "groups": {
+       "type": "array",
+       "description": "Every twin-set, at both grains. `group_id` is hashed over a canonical serialization of the key rather than assigned by iteration order, so two runs - and two instances - label the same group identically, which is what makes it quotable in a review. It rides in `evidence` and never in `candidate_id`, so the ledger's fold key is untouched.",
+       "items": {
+        "type": "object",
+        "required": [
+         "group_id",
+         "grain",
+         "members"
+        ],
+        "additionalProperties": false,
+        "properties": {
+         "group_id": {
+          "type": "string"
+         },
+         "grain": {
+          "type": "string",
+          "enum": [
+           "dataset",
+           "dataflow"
+          ]
+         },
+         "members": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "producers": {
+          "type": "object",
+          "description": "Member id -> the dataflow that produced it. Carried at the output grain, where WHICH dataflow produced each twin is the reviewer's first question; a dataflow-grain group is already keyed by producer.",
+          "additionalProperties": {
+           "type": "string"
+          }
+         }
+        }
+       }
+      }
+     }
+    },
+    "consumption": {
+     "type": "object",
+     "description": "Ticket 31. What `unconsumed`'s two NEW inputs actually saw. The condition's answer now depends on two reads beyond the governance reports - `impactCardCount`, returned inline by the dataset enumeration, as a FILTER, and per-asset lineage as the AUTHORITY that adjudicates only what the filter flags (ADR-0004) - so a reviewer asked to trust that a candidate was REMOVED, or kept despite a consumption signal, needs the counts and the call budget in the artifact rather than in a log line that scrolled past.",
+     "required": [
+      "signal"
+     ],
+     "additionalProperties": false,
+     "properties": {
+      "signal": {
+       "type": "string",
+       "enum": [
+        "present",
+        "unavailable",
+        "not-declared"
+       ],
+       "description": "Three states, never two. `not-declared` means the caller never offered the input; `unavailable` means it was offered and could not be read, which takes `unconsumed` OFF THE RUN rather than falling back to the governance reports alone - that fallback is the 13 false positives ticket 19 found, 11 of them consumed through a Domo view no governance report carries, and reverting to it silently is not available."
+      },
+      "counts": {
+       "type": [
+        "object",
+        "null"
+       ],
+       "description": "What the pre-filter saw over the enumeration: datasets seen, datasets carrying counts, datasets flagged as consumed. Null exactly when `signal` is not `present`. Open-ended - it is `ConsumptionCounts.stats()`.",
+       "additionalProperties": true
+      },
+      "adjudication": {
+       "type": [
+        "object",
+        "null"
+       ],
+       "description": "The per-asset pass over the contested set, with its verdicts and `lineage_calls` - the CALL BUDGET, published because a bounded per-asset read is only defensible while its bound is visible: 31 calls on granite against the 803 a per-asset loop would have cost. Null when no adjudication ran.",
+       "additionalProperties": true
+      },
+      "workload_change": {
+       "type": "object",
+       "description": "Recorded workload growth comparison with the immediately preceding run. Missing in older artifacts; never a cap or a latency measurement.",
+       "required": [
+        "status",
+        "reason",
+        "current_count",
+        "prior_count",
+        "prior_run_id",
+        "growth_pct",
+        "threshold_pct",
+        "warned"
+       ],
+       "additionalProperties": false,
+       "properties": {
+        "status": {
+         "enum": [
+          "comparable",
+          "unavailable"
+         ]
+        },
+        "reason": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "current_count": {
+         "type": [
+          "integer",
+          "null"
+         ],
+         "minimum": 0
+        },
+        "prior_count": {
+         "type": [
+          "integer",
+          "null"
+         ],
+         "minimum": 0
+        },
+        "prior_run_id": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "growth_pct": {
+         "type": [
+          "number",
+          "null"
+         ]
+        },
+        "threshold_pct": {
+         "type": "number",
+         "exclusiveMinimum": 0
+        },
+        "warned": {
+         "type": "boolean"
+        }
+       }
+      },
+      "adjudication_warn_above": {
+       "type": "integer",
+       "description": "The operational warning line in force for this run, stored beside the adjudication count so the rendered coverage digest remains a projection of this findings file rather than of a later config. A warning only; adjudication is never capped."
+      },
+      "contested": {
+       "type": "array",
+       "description": "The contested dataset ids, NAMED. The pre-filter is only defensible while its membership is visible, and `31 contested` with no ids is not a measurement.",
+       "items": {
+        "type": "string"
+       }
+      },
+      "unreachable": {
+       "type": "array",
+       "description": "Datasets whose lineage call failed. They score `unknown` and never `unconsumed`: an unreachable authority is not evidence of no consumer.",
+       "items": {
+        "type": "string"
+       }
+      },
+      "publications": {
+       "type": "object",
+       "description": "Ticket 65. The FIFTH consumer type: publication to another instance. A dataset in a publication with a live subscriber feeds cards on the subscribing instance, and no governance report, enumeration count or lineage call carries the edge - on Altimate's first run its own governance reports sat at ranks 7-13 of the head as `unconsumed` for exactly that reason. Read from the publisher's own API in one list, one summaries call and one detail per publication; bounded by the number of publications, never by the population. Same signal triad as the enumeration: `unavailable` takes `unconsumed` OFF the run.",
+       "required": [
+        "signal",
+        "counts",
+        "calls",
+        "detail"
+       ],
+       "additionalProperties": false,
+       "properties": {
+        "signal": {
+         "type": "string",
+         "enum": [
+          "present",
+          "unavailable",
+          "not-declared"
+         ]
+        },
+        "counts": {
+         "type": [
+          "object",
+          "null"
+         ],
+         "description": "`Publications.stats()` plus `candidate_datasets_removed`: loaded datasets with zero governance cards and a live subscriber - what governance alone would have scored wrongly. Null exactly when `signal` is not `present`. Publications with no summary are counted separately because their subscriber count is unknown, not zero.",
+         "additionalProperties": true
+        },
+        "calls": {
+         "type": "integer",
+         "description": "HTTP requests the read cost: 2 + the number of publications. 0 when the signal is not present."
+        },
+        "detail": {
+         "type": [
+          "string",
+          "null"
+         ],
+         "description": "Why the read failed, when `signal` is `unavailable`. Null otherwise."
+        }
+       }
+      }
+     }
+    },
+    "input_fingerprints": {
+     "type": "object",
+     "description": "Ticket 42. One compact fingerprint per input that can change an `unconsumed` verdict: a SHA-256 over the input's canonical rows plus a few counts, never the rows themselves - the candidate list is already this file's one unbounded artifact. Exists so the NEXT run's change report can say whether an input moved in the same run a condition's population did. Absent is not changed is not zero: `state: present` with a hash over zero rows is an input that loaded and was empty; `state: unavailable` is an input that was never read, and it is reported by the change report as `became-unavailable`, never as `changed`. A run written before this block existed compares as `prior_fingerprints: absent`.",
+     "required": [
+      "dataflow_edges",
+      "card_linkage",
+      "enumeration_consumption",
+      "publications"
+     ],
+     "additionalProperties": false,
+     "properties": {
+      "dataflow_edges": {
+       "$ref": "#/$defs/inputFingerprint",
+       "description": "The dataflow -> dataset and dataset -> dataflow edge graph from `Dataflow Details`, one line per edge."
+      },
+      "publications": {
+       "$ref": "#/$defs/inputFingerprint",
+       "description": "Ticket 65. Per published dataset, the publications carrying it and each one's subscriber count from the publish API. A subscriber count moving from 1 to 0 changes an `unconsumed` verdict with no other input moving."
+      },
+      "card_linkage": {
+       "$ref": "#/$defs/inputFingerprint",
+       "description": "The per-dataset card aggregate from `Cards and Datasets`: the `cards` count per dataset, which is the one figure `unconsumed` reads. NOT the placement evidence (`cards_with_no_page_recorded`, `pages`): those are evidence about where a card sits and cannot move the verdict, so hashing them would report `changed` for a movement that could not have moved any candidate. Counts: datasets_with_rows, cards_total."
+      },
+      "enumeration_consumption": {
+       "$ref": "#/$defs/inputFingerprint",
+       "description": "The per-dataset union-signal counts from the dataset enumeration. `unavailable` when the enumeration could not be read completely - which is a coverage exception on the instance, not a fingerprint - or was never offered to the run; `why` says which."
+      }
+     }
+    },
+    "ledger": {
+     "type": "object",
+     "description": "Coverage of the HUMAN JUDGEMENT input. A rejected ledger line is a verdict that did not apply - the asset sits in the candidate list as though nobody ever judged it. Hand-editing the ledger is the documented fallback, so one wrong letter has to produce a line here rather than silence.",
+     "required": [
+      "lines_read",
+      "malformed_lines"
+     ],
+     "additionalProperties": false,
+     "properties": {
+      "lines_read": {
+       "type": "integer",
+       "description": "Valid lines folded."
+      },
+      "candidates_with_state": {
+       "type": "integer"
+      },
+      "malformed_lines": {
+       "type": "integer",
+       "description": "Lines REJECTED. Never fatal - one typo must not make the whole loop hostage - but never silent either."
+      },
+      "malformed": {
+       "type": "array",
+       "description": "Each rejected line: its 1-based position in the file, why it was rejected, and enough of it to find and fix by hand.",
+       "items": {
+        "type": "object",
+        "required": [
+         "line",
+         "error"
+        ],
+        "additionalProperties": false,
+        "properties": {
+         "line": {
+          "type": "integer"
+         },
+         "error": {
+          "type": "string"
+         },
+         "candidate_id": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "text": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "First 200 characters of a line that was not JSON at all."
+         }
+        }
+       }
+      }
+     }
+    },
+    "deep_links": {
+     "type": "object",
+     "description": "Ticket 44 (after ticket 35). Dataflow candidates carry a CONSTRUCTED deep link - the UI route with the instance host from config and the numeric `Dataflow ID` from `Dataflow Details` - granted only when two guards hold. This block is the coverage of that rule: how many population dataflows got a link and WHICH did not, named, with the guard that withheld it. It exists so that `deep_link: null` on a dataflow can be told apart from a file written before the link existed, and so that a mixed-identifier-space row is visible rather than silently linked to the wrong object. Usability of the link is a separate fact from its construction and is not claimed here.",
+     "required": [
+      "dataflow_route",
+      "guards",
+      "dataflows_linked",
+      "dataflows_unlinked",
+      "acceptance"
+     ],
+     "additionalProperties": false,
+     "properties": {
+      "dataflow_route": {
+       "type": "string",
+       "description": "The route pattern with `{host}` and `{dataflow_id}` placeholders, as the collector formats it. A pattern, so the file states the rule it applied rather than leaving a reader to reverse-engineer it from one link."
+      },
+      "guards": {
+       "type": "string",
+       "description": "The two conditions a row must meet, in words: `Dataflow ID` decimal AND `DAP Dataflow ID` present. `Dataflow ID` is itself two identifier spaces - on the instance this was calibrated against, 371 rows carried the numeric id and 3 carried a UUID with `DAP Dataflow ID` absent, exactly the non-executing objects the population filter removes."
+      },
+      "dataflows_linked": {
+       "type": "integer",
+       "description": "Population dataflows that received a link."
+      },
+      "dataflows_unlinked": {
+       "type": "array",
+       "description": "Population dataflows that did NOT, each with `dataflow_id`, `name` and `why` naming the guard. Empty on an instance whose mixed-space rows are all non-executing; non-empty on the first instance where a DataFusion-shaped object executes, which is the case the guards exist for.",
+       "items": {
+        "type": "object",
+        "required": [
+         "dataflow_id",
+         "why"
+        ],
+        "additionalProperties": true,
+        "properties": {
+         "dataflow_id": {
+          "type": "string"
+         },
+         "name": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "why": {
+          "type": "string"
+         }
+        }
+       }
+      },
+      "acceptance": {
+       "type": "string",
+       "description": "States that the route is constructed rather than observed and names the authenticated click-through that gates presenting it as usable. Carried in the file because the file outlives the ticket that gates it."
+      }
+     }
+    },
+    "notes": {
+     "type": "array",
+     "description": "Named, explicit statements that something did not run or could not be judged. Never a silent omission.",
+     "items": {
+      "type": "object",
+      "required": [
+       "reason",
+       "detail"
+      ],
+      "additionalProperties": true,
+      "properties": {
+       "reason": {
+        "type": "string"
+       },
+       "detail": {
+        "type": "string"
+       }
+      }
+     }
+    },
+    "reports": {
+     "type": "array",
+     "description": "Preflight's per-report result. Every id was verified BY QUERYING, never by existence: a dataset can exist, report a current lastUpdated, and return zero rows or 410 Gone.",
+     "items": {
+      "type": "object",
+      "additionalProperties": true
+     }
+    },
+    "pillars": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "required": [
+       "pillar",
+       "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "pillar": {
+        "type": "string",
+        "enum": [
+         "data",
+         "content",
+         "user"
+        ]
+       },
+       "status": {
+        "type": "string",
+        "enum": [
+         "ok",
+         "partial",
+         "blocked"
+        ]
+       },
+       "exception": {
+        "type": [
+         "object",
+         "null"
+        ],
+        "description": "Required when status is partial or blocked.",
+        "required": [
+         "reason",
+         "detail"
+        ],
+        "additionalProperties": false,
+        "properties": {
+         "reason": {
+          "type": "string",
+          "enum": [
+           "dataset-missing",
+           "dataset-empty",
+           "dataset-error",
+           "connection-unavailable",
+           "shape-mismatch",
+           "not-requested"
+          ]
+         },
+         "detail": {
+          "type": "string"
+         },
+         "dataset": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "assets_examined": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       }
+      }
+     }
+    }
+   }
+  },
+  "cost_model": {
+   "type": "object",
+   "description": "Cost is MEASURED, not modeled - and metered by one of TWO reports (tickets 06 and 20). Domo meters usage per entity, per day, per SKU; for an `executions-dataflow-*` SKU the entity is the OUTPUT DATASET, and each output of a multi-output dataflow bills independently at the same execution count, so a partial saving is exactly measured rather than apportioned. `Credit Usage` adds the credit conversion and is CUSTOMER-LEVEL, held by the instance holding the contract; `Usage Metrics` is the same meter PER INSTANCE without credits, and 10 of 11 subsidiaries publish one. EVERY FIGURE HERE CARRIES ITS UNIT, because the same field holds credits on one instance and executions on the next and the two are never converted: the portfolio is on one contract at one price per credit, so credit totals ARE money and compare across instances, while an execution count is neither. What an execution count does NOT lose is the ordering - ticket 20 measured the two rankings at 0.1-0.2% discordance.",
+   "required": [
+    "basis",
+    "meter",
+    "window_days",
+    "recurring_unit",
+    "storage_unit",
+    "attributed_recurring",
+    "attributed_storage",
+    "attributed_human_triggered",
+    "opportunity"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "basis": {
+     "type": "string",
+     "enum": [
+      "metered-credits",
+      "metered-executions",
+      "none"
+     ],
+     "description": "WHICH METER, not measured-or-guessed. `metered-credits`: the instance's own Credit Usage report was readable. `metered-executions`: it was not, but Usage Metrics was - figures are in executions and are NEVER converted to credits. `none`: neither was readable, every figure is null, and ranking falls through to storage -> age -> id. The former `metered`/`estimated` pair is gone with the rate card it labelled, which never produced a figure at all."
+    },
+    "unavailable_reason": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "description": "Required in spirit when basis is `none`: why NEITHER meter could be read, and therefore why every per-candidate figure is null."
+    },
+    "window_days": {
+     "type": "integer",
+     "description": "Trailing window. Deliberately matches conditions.stale.*_days so the cost window and the condition window cannot contradict each other."
+    },
+    "window": {
+     "type": "object",
+     "additionalProperties": false,
+     "properties": {
+      "start": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "end": {
+       "type": [
+        "string",
+        "null"
+       ]
+      }
+     }
+    },
+    "attributed_coverage_pct": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "REPORTED, never a gate. Attributed entities are legitimately a subset: Jupyter, AI, workflow and publish spend sit outside the cleanup surface, so a hard variance gate would fail a run that was working correctly."
+    },
+    "billed_entities": {
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "billed_entities_matched": {
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "instance_billed_entities": {
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "skus_outside_cleanup_surface": {
+     "type": "object",
+     "additionalProperties": {
+      "type": "number"
+     },
+     "description": "SKUs matching neither saving term, with their usage. Listed so a reader can see WHY coverage is below 100 rather than suspecting a join failure. On granite these are publish, AI, workflow and Jupyter spend - plus, on the executions basis only, `Publish Rows under Management`, which Credit Usage does not bill at the dataset grain. NOT summable across SKUs on the executions basis: the values are in different units."
+    },
+    "meter": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "enum": [
+      "credit_usage",
+      "usage_metrics",
+      null
+     ],
+     "description": "The report key the figures were read from. Null on the `none` basis."
+    },
+    "recurring_unit": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "enum": [
+      "credits_per_month",
+      "executions_per_month",
+      "rows_under_management",
+      null
+     ],
+     "description": "The unit of `attributed_recurring`, `attributed_human_triggered`, `opportunity.recurring`, `opportunity.human_triggered` and every candidate's `recurring`."
+    },
+    "storage_unit": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "enum": [
+      "credits_per_month",
+      "executions_per_month",
+      "rows_under_management",
+      null
+     ],
+     "description": "The unit of `attributed_storage`, `opportunity.storage` and every candidate's `additional_if_deleted`. DIFFERS from `recurring_unit` on the executions basis and only there: Credit Usage prices a row-month so storage lands in credits like everything else, while Usage Metrics reports the STOCK - the same rows every day - which is reduced to its mean rather than summed. Verified on granite 2026-08-28: the credit report charges storage once a month and the usage report carries it daily, and on a shared date the two agree exactly (1,730 entities, 360,618,348 rows)."
+    },
+    "attributed": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "Usage attributable to assets this run actually examined, in `recurring_unit`. On the credits basis this is every term summed, which is only a number because the credit conversion put them all in one unit. On the executions basis it is the RECURRING TERM ALONE - see `attributed_is_recurring_only` - because adding executions to rows to tokens is the exact category error the credit column used to make impossible."
+    },
+    "instance_total": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "Every unit the instance burned in the same window - the coverage denominator, in `recurring_unit`. On the executions basis the query filters to that unit before aggregating."
+    },
+    "unattributed": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "attributed_is_recurring_only": {
+     "type": "boolean",
+     "description": "True where `attributed` counts only the recurring term because the basis's terms do not share a unit. Reported rather than left implicit, so the coverage percentage is not read as the same measurement under both meters."
+    },
+    "attributed_recurring": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "The RECURRING term over the billed entities this run EXAMINED, each counted once, in `recurring_unit`. A COVERAGE figure: it answers how much of the instance's spend the tool can see, not what acting on the findings recovers. Until ticket 34 it shipped as `recoverable_by_quarantine` and was read as the second — on granite 9,957.667 of an 11,823.782 instance total, 84% of everything the instance spends, dominated by healthy consumed assets no condition flags and no reviewer would quarantine. The true opportunity on the same run is 1,495.333, a 6.7x overstatement. The old name is RETIRED rather than reassigned, so a reader holding it gets nothing rather than a much smaller number under words they already trust. See `opportunity`."
+    },
+    "attributed_storage": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "Storage over EXAMINED entities, in `storage_unit`. Coverage side, same population as `attributed_recurring`. A quarantined dataset's rows stay materialized and keep billing, so storage stops only on delete — this corrects an empirical claim inside ADR-0002. Was `additional_if_deleted` at this level until ticket 34, where it was overstating the delete opportunity 4.3x; the identically-named PER-CANDIDATE field is unchanged and was always correct."
+    },
+    "attributed_human_triggered": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "`manual` category spend over EXAMINED entities, in `recurring_unit`. Real, and a real operational finding, but it does not recur — counting it would inflate what quarantining recovers. Was `human_triggered_excluded`."
+    },
+    "opportunity": {
+     "type": "object",
+     "additionalProperties": false,
+     "description": "What acting on THESE FINDINGS would recover — the other side of ticket 34's split, and the figure the retired `recoverable_by_quarantine` name promised. Three reductions, each load-bearing: summed per BILLED ENTITY rather than per candidate id (a candidate is asset+condition, so one entity can carry several rows — granite's naive row sum is 2,922.325 against a true 1,571.660); over the UNION OF BOTH GRAINS, a dataset candidate contributing its own id and a dataflow candidate its outputs (naive addition of the two grains inflates granite by 49%, while the output grain alone would silently lose dataflow 577's non-candidate output); and each DUPLICATE GROUP counted once by giving back the surviving member's cost. A FLOOR, because nothing in the data picks which twin survives. Over ACTIONABLE candidates only, with the suppressed subtotal reported beside it.",
+     "required": [
+      "recurring",
+      "storage",
+      "human_triggered",
+      "entities"
+     ],
+     "properties": {
+      "recurring": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "The headline opportunity figure, in `recurring_unit`. Granite: 1,495.333 credits/month, 12.6% of the instance total."
+      },
+      "storage": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "Additional if the candidates are DELETED rather than quarantined, in `storage_unit`. Granite: 85.150."
+      },
+      "human_triggered": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "`manual` spend on candidate entities, in `recurring_unit`. Excluded from the headline because it does not recur. Granite: 40.333."
+      },
+      "recurring_unit": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "enum": [
+        "credits_per_month",
+        "executions_per_month",
+        "rows_under_management",
+        null
+       ],
+       "description": "Carried inside the block as well as in the header: this block is the one a reader quotes, and a figure leaving it without its unit is the misreading the whole basis split exists to prevent."
+      },
+      "storage_unit": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "enum": [
+        "credits_per_month",
+        "executions_per_month",
+        "rows_under_management",
+        null
+       ]
+      },
+      "entities": {
+       "type": "integer",
+       "description": "Distinct billed entities under at least one ACTIONABLE candidate — the population the figures above are summed over."
+      },
+      "entity_once_recurring": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "The recurring term BEFORE the duplicate-group reduction: each entity once, every group member still counted. Published so the reduction is auditable rather than asserted — the gap to `recurring` is the group structure, and a reader who cannot see it cannot check the headline against the candidate rows. Granite: 1,825.333."
+      },
+      "group_survivors_recurring": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "What the reduction gave back: the cost of the member each twin-set KEEPS. Granite: 330.0. Note that this equals `coverage.duplication.realisable_recurring` on granite ONLY because every granite group is an equal-cost pair — retaining and recovering are different figures for a group like [100, 50], which is why every fixture for this carries an unequal-cost group."
+      },
+      "suppressed_recurring": {
+       "type": [
+        "number",
+        "null"
+       ],
+       "description": "The subtotal for entities whose candidates are ALL suppressed by a prior verdict, in `recurring_unit`. Withheld from the headline and reported as its own line, because a keep-permanent must never quietly hide real recurring spend (ticket 07 decision 11): the cost stays visible, only the recommendation is withheld. Was the top-level `suppressed_recoverable_per_month`, which summed per candidate id and so triple-counted asset+condition multiplicity, both grains, and duplicate groups — latent only because granite's ledger carried no suppressions yet."
+      }
+     }
+    }
+   }
+  },
+  "candidates": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "candidate_id",
+     "pillar",
+     "asset_type",
+     "asset_id",
+     "asset_name",
+     "condition",
+     "band",
+     "attention",
+     "recommended_action",
+     "recommended_action_basis",
+     "evidence",
+     "ledger"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "candidate_id": {
+      "type": "string",
+      "description": "Identity is ASSET + CONDITION, not asset alone. Format '<asset_type>:<asset_id>:<condition>'. An asset kept while merely stale is a different question once nothing consumes it; collapsing those loses a real finding.",
+      "pattern": "^(dataset|dataflow|card|page|app|user):[^:]+:(orphaned|stale|failing|unconsumed|duplicated|low-reach|inactive)$"
+     },
+     "pillar": {
+      "type": "string",
+      "enum": [
+       "data",
+       "content",
+       "user"
+      ]
+     },
+     "asset_type": {
+      "type": "string",
+      "enum": [
+       "dataset",
+       "dataflow",
+       "card",
+       "page",
+       "app",
+       "user"
+      ]
+     },
+     "asset_id": {
+      "type": "string"
+     },
+     "asset_name": {
+      "type": "string"
+     },
+     "deep_link": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Real IDs and links belong here. This is an operational artifact for the instance owner, who already has full access to everything it names. Published documentation describes patterns instead — the two artifact classes have different audiences and different rules. A dataset carries the report's `Link` column. A dataflow carries a CONSTRUCTED link (ticket 35, built by ticket 44): the UI route with the configured instance host and the numeric `Dataflow ID`, granted only when that id is decimal AND `DAP Dataflow ID` is present; a row failing either guard is null here and named in `coverage.deep_links`. Constructed is not observed on this run: ticket 47's authenticated click-through opened the route on granite and on a second instance (2026-09-03), and a permission error on click says something about the viewer's access, not about the link."
+     },
+     "owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+       "user_id": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "name": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      }
+     },
+     "condition": {
+      "type": "string",
+      "enum": [
+       "orphaned",
+       "stale",
+       "failing",
+       "unconsumed",
+       "duplicated",
+       "low-reach",
+       "inactive"
+      ],
+      "description": "Exactly one per candidate. Definitions in CONTEXT.md — these are deliberately narrow and must not be blurred."
+     },
+     "band": {
+      "type": "string",
+      "enum": [
+       "never-landed",
+       "fresh-but-unread",
+       "duplicated",
+       "under-6mo",
+       "6-12mo",
+       "1-2yr",
+       "2-3yr",
+       "3yr-plus",
+       "never-run",
+       "unbanded"
+      ],
+      "description": "The fixed triage band this candidate occupied when the findings file was written. Stored rather than recomputed by the renderer so a report remains byte-identical after config changes. `fresh-but-unread` reads the `unconsumed` condition rather than deriving consumption again from downstream counts: a downstream dataflow can be part of the same dead chain. `unbanded` is an explicit fallback, never a missing value. `never-landed` (ticket 54) is tested FIRST, ahead of `duplicated`: a dataset that has never held a row has no freshness to read, no age to bucket and no shape worth comparing, and while it sat later in the ladder `fresh-but-unread` claimed a netsuite connector that succeeds daily, has never landed a row and bills 30 credits/month - that band reads the run ATTEMPT, which ticket 43 established is not a landing. It is dataset-grain and covers all 48 of granite's never-landed datasets in one word, both the 45 that never attempted a run and the 3 that attempted and landed nothing; `never-run` is now the DATAFLOW-grain statement, because a dataflow's landing is its outputs'."
+     },
+     "evidence": {
+      "type": "object",
+      "description": "The facts that triggered the condition. Sufficient for a human to check the work without rerunning anything. Note that `null` here means the collector observed the field as ABSENT, which is never the same as zero - see ADR-0003.",
+      "additionalProperties": false,
+      "required": [
+       "run_history"
+      ],
+      "properties": {
+       "run_history": {
+        "type": "string",
+        "enum": [
+         "never",
+         "observed"
+        ],
+        "description": "REQUIRED on every candidate. `unconsumed` no longer distinguishes an object that never ran from one that ran for years and lost its last reader; this field is how a reviewer tells them apart, and it is the likeliest source of false positives in ticket 08's random-tail gate. `never` means the retained-executions count (`executions_retained`) was present and zero; retention keeps the 50 most recent executions regardless of age, so zero still means never ran (ticket 33). An object whose run history was ABSENT is a non-executing object and left the population before scoring - it never reaches this schema."
+       },
+       "last_run": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "format": "date-time",
+        "description": "Null exactly when run_history is `never`. This is the last run ATTEMPT (`Last_Run_Date`), not when data last arrived - see `last_data_at`."
+       },
+       "landing_history": {
+        "type": "string",
+        "enum": [
+         "never",
+         "observed",
+         "unknown"
+        ],
+        "description": "Dataset candidates only; a dataflow's landing is its outputs'. Whether data has ever LANDED on the dataset, as distinct from `run_history`, which is whether a run was ever ATTEMPTED. `never` is a finding: a connector that runs on schedule returning nothing has attempts and no landing, and `DELETE | Row Count | SW` on granite has a 2022 `last_run` having never held a row. `unknown` means the dataset enumeration did not describe this dataset or carried no landing field - not-knowing is never reported as never-landed."
+       },
+       "last_data_at": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "format": "date-time",
+        "description": "Dataset candidates only. When data last LANDED, from `datasources/search`.`lastUpdated` (epoch milliseconds on the wire, an exact `0` meaning never, resolved to absent at the typed boundary). Null exactly when `landing_history` is `never` or `unknown`; `landing_history` says which. Attempt and landing are two facts and are never merged: a fresh `last_run` with a null here is a connector that runs and delivers nothing. No `rowCount` accompanies it - that field reports 0 for populated datasets and fresh counts for archived ones."
+       },
+       "last_execution_status": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "import_type": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "description": "Dataset candidates only. Verbatim from DomoStats `Import_Type`; null when the field is absent."
+       },
+       "data_provider": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "description": "Dataset candidates only. Verbatim from DomoStats `Data_Provider`; null when the field is absent."
+       },
+       "executions_retained": {
+        "type": [
+         "integer",
+         "null"
+        ],
+        "description": "Executions Domo still RETAINS for this dataflow - every execution inside a rolling ~6-month window plus at least the 50 most recent regardless of age. NOT a lifetime count: exactly 50 means 'at least 50, all older than the window'; for an active dataflow it is a ~6-month run rate. Read from `Dataflow Details`.`Execution Count`, which copies the product's `executionCount` verbatim (ticket 33 measured 561 against 3,850 lifetime executions for one dataflow). Replaces `execution_count`, which shipped in runs 008 to 02-001 under a lifetime-sounding name. Cast from a STRING column through the typed reader; 0 and null are different answers."
+       },
+       "run_state": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "description": "Dataflow candidates only; verbatim from the source, e.g. `ENABLED` / `DISABLED` / `DRAFT`, and null at dataset grain. `DISABLED` is Domo's own `paused: true` flag under the governance connector's name. Do not use `enabled: false` as a synonym: `enabled: false` is wider and also includes `DRAFT`. Measured on granite 2026-09-04, the 15 `DISABLED` rows were exactly the 15 product payloads with `paused: true`, while `enabled: false` covered 26 rows - those 15 plus 11 drafts. Drafts ARE in the population and eligible for every condition - a four-year-old draft is the purest form of the clutter this pillar exists to find - but the reviewer must see the `DRAFT` label to judge it in one glance."
+       },
+       "pause_history": {
+        "type": [
+         "object",
+         "null"
+        ],
+        "description": "Dataflow candidates only. Optional Activity Log context for a current `run_state: DISABLED`; null for every other current state and when the optional report is unavailable (the latter is also named in `coverage.notes`). `observed` means the latest relevant event is an unambiguous DISABLED event. `not-observed` means the report was readable but carried no DISABLED/ENABLED event for this currently disabled object. `conflict` means its latest relevant event is ENABLED or simultaneous latest events disagree, so the current Dataflow Details snapshot wins. Evidence only: never candidate membership, rank or recommended action.",
+        "required": [
+         "state",
+         "latest_action",
+         "event_at",
+         "actor_user_id",
+         "actor_name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+         "state": {
+          "type": "string",
+          "enum": [
+           "observed",
+           "not-observed",
+           "conflict"
+          ]
+         },
+         "latest_action": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "enum": [
+           "DISABLED",
+           "ENABLED",
+           "CONFLICTING",
+           null
+          ]
+         },
+         "event_at": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "format": "date-time"
+         },
+         "actor_user_id": {
+          "type": [
+           "string",
+           "null"
+          ]
+         },
+         "actor_name": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        }
+       },
+       "enabled": {
+        "type": [
+         "boolean",
+         "null"
+        ]
+       },
+       "outputs_declared": {
+        "type": [
+         "integer",
+         "null"
+        ],
+        "description": "The object's own `Number of Outputs`. Cross-checked against outputs_observed and NOT trusted over it: granite's DataFusions declare 1 output while carrying zero output-dataset rows."
+       },
+       "outputs_observed": {
+        "type": [
+         "integer",
+         "null"
+        ],
+        "description": "Distinct output datasets actually present as edge rows. Zero is a legitimate value and makes a dataflow vacuously unconsumed."
+       },
+       "inputs_observed": {
+        "type": [
+         "integer",
+         "null"
+        ],
+        "description": "Dataflow candidates only: distinct input datasets actually present as edge rows. Dataset candidates carry null because the field does not apply at their grain."
+       },
+       "days_stale": {
+        "type": [
+         "integer",
+         "null"
+        ],
+        "description": "Null when run_history is `never` - an object that has never refreshed has an undefined age, not an infinite one, and is outside the `stale` test entirely."
+       },
+       "schedule": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "description": "Dataset candidates only: the DomoStats `Schedule` string. Null on a dataflow: `Dataflow Details` carries no schedule column and the product path carries a trigger model rather than a schedule string, so this null is NOT-READ and never `unscheduled` (ticket 56). Measured 2026-09-04 over all 371 granite dataflows: `dataprocessing/v1/dataflows/{id}` has no `schedule` field, only `triggerSettings.triggers[].triggerEvents[]` of kind `DATASET_UPDATED` (163) or `SCHEDULE` (59, a quartz-shaped object needing the block's `zoneId`), and 149 carry no `triggerSettings` key at all - so unscheduled is spelled by omission and is indistinguishable from unreported."
+       },
+       "source_datasets": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       },
+       "tags": {
+        "type": [
+         "array",
+         "null"
+        ],
+        "description": "Dataset candidates only. The dataset's Domo tags from `datasources/search`.`tagsList`, sorted and deduplicated. An empty array means Domo explicitly returned no tags; null means the enumeration or field was unavailable. Tags are human context and never a condition, rank, suppression, or ledger verdict.",
+        "uniqueItems": true,
+        "items": {
+         "type": "string"
+        }
+       },
+       "output_tags": {
+        "type": [
+         "array",
+         "null"
+        ],
+        "description": "Dataflow candidates only. The readable product path exposes no dataflow tag field, so tags remain attributed to the output dataset that actually carries them. Null means the enumeration was unavailable; an empty array means the dataflow has no outputs.",
+        "items": {
+         "type": "object",
+         "required": [
+          "dataset_id",
+          "tags"
+         ],
+         "additionalProperties": false,
+         "properties": {
+          "dataset_id": {
+           "type": "string"
+          },
+          "tags": {
+           "type": [
+            "array",
+            "null"
+           ],
+           "uniqueItems": true,
+           "items": {
+            "type": "string"
+           }
+          }
+         }
+        }
+       },
+       "tag_relationships": {
+        "type": "array",
+        "description": "Ticket 64's deterministic interpretation of the first calibrated cleanup vocabulary: `Active` contradicts an `unconsumed` finding, and `Duplicate?` agrees with a `duplicated` finding. Context only: these annotations never alter membership, rank, suppression, or the ledger, and owner-review tags remain raw tags rather than verdicts.",
+        "items": {
+         "type": "object",
+         "required": [
+          "relationship",
+          "tag",
+          "source",
+          "dataset_id",
+          "detail"
+         ],
+         "additionalProperties": false,
+         "properties": {
+          "relationship": {
+           "type": "string",
+           "enum": [
+            "agreement",
+            "contradiction"
+           ]
+          },
+          "tag": {
+           "type": "string"
+          },
+          "source": {
+           "type": "string",
+           "enum": [
+            "dataset",
+            "output_dataset"
+           ]
+          },
+          "dataset_id": {
+           "type": [
+            "string",
+            "null"
+           ]
+          },
+          "detail": {
+           "type": "string"
+          }
+         }
+        }
+       },
+       "failing_basis": {
+        "type": "string",
+        "description": "Failing candidates only. The source value that made the latest run attempt a failure, rendered in reader language."
+       },
+       "stale_window_days": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Stale candidates only. The configured age window this candidate exceeded, stored with the finding so a later config cannot change what the finding meant."
+       },
+       "unconsumed_basis": {
+        "type": "string",
+        "description": "Unconsumed dataflow candidates only. Names whether the flow has no outputs or every output path ends dead."
+       },
+       "unconsumed_adjudication": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "description": "Unconsumed dataset candidates contested by the enumeration only. The product-lineage adjudication outcome that retained the candidate."
+       },
+       "unconsumed_adjudication_detail": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "description": "Reader-language explanation of `unconsumed_adjudication`; null only when the adjudication surface omitted its detail."
+       },
+       "downstream_datasets_reaching_no_card": {
+        "type": [
+         "integer",
+         "null"
+        ],
+        "minimum": 0,
+        "description": "Dead-chain candidates only. Product lineage's count of downstream datasets when the chain reaches zero cards."
+       },
+       "enumeration_signals": {
+        "type": "array",
+        "description": "The non-zero datasources/search impact counts that made this candidate require product-lineage adjudication.",
+        "uniqueItems": true,
+        "items": {
+         "type": "string"
+        }
+       },
+       "published_without_subscribers": {
+        "type": "array",
+        "description": "Names of Domo Publish publications carrying this dataset to no subscribing instance. Such a publication is evidence to retire, not a consumer.",
+        "uniqueItems": true,
+        "items": {
+         "type": "string"
+        }
+       },
+       "duplicate_group": {
+        "type": "string",
+        "description": "Duplicated candidates only. Stable deterministic identity of the twin-set; candidate identity remains asset plus condition."
+       },
+       "duplicate_grain": {
+        "type": "string",
+        "enum": [
+         "dataset",
+         "dataflow"
+        ],
+        "description": "Whether this redundancy is between output datasets or whole dataflows."
+       },
+       "duplicate_group_size": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Number of members in the duplicate group."
+       },
+       "duplicate_twins": {
+        "type": "array",
+        "description": "The other output datasets or dataflows this candidate is compared with. At dataflow grain these are partners and can extend beyond the strict redundant-member set.",
+        "uniqueItems": true,
+        "items": {
+         "type": "string"
+        }
+       },
+       "duplicate_twin_producers": {
+        "type": "array",
+        "description": "Output-dataset grain only. Producer dataflow ids for the named twin outputs.",
+        "uniqueItems": true,
+        "items": {
+         "type": "string"
+        }
+       },
+       "duplicate_twin_cards": {
+        "type": [
+         "integer",
+         "null"
+        ],
+        "minimum": 0,
+        "description": "Cards on the named twins, or null when card linkage was unavailable. This candidate's own card count remains in `consumers`."
+       },
+       "duplicated_basis": {
+        "type": "string",
+        "description": "Duplicated candidates only. Reader-language statement of the exact twin rule this row satisfied."
+       },
+       "duplicate_twin_detail": {
+        "type": "array",
+        "description": "Ticket 44 (ticket 25 decision 8). `duplicated` candidates only, on BOTH members of a set: everything the record knows about each twin, so a reviewer asked to `decide-which-survives` is never handed a bare id. Every field is the TWIN'S own - this candidate's `consumers` and `cost` already carry this member's. Built by one function from the same assets for both members, so A's description of B and B's description of A cannot disagree. NOTHING in this block, or anywhere in the file, names a survivor: that is a business judgment (ticket 25 decision 9). Page NAMES are absent on purpose - they need a per-card read the collector does not make.",
+        "items": {
+         "type": "object",
+         "required": [
+          "asset_type",
+          "asset_id",
+          "asset_name",
+          "deep_link",
+          "owner",
+          "recurring",
+          "recurring_unit",
+          "cards",
+          "pages",
+          "name_stem_difference"
+         ],
+         "additionalProperties": false,
+         "properties": {
+          "asset_type": {
+           "type": "string",
+           "enum": [
+            "dataset",
+            "dataflow"
+           ]
+          },
+          "asset_id": {
+           "type": "string"
+          },
+          "asset_name": {
+           "type": [
+            "string",
+            "null"
+           ]
+          },
+          "deep_link": {
+           "type": [
+            "string",
+            "null"
+           ],
+           "description": "The twin's link: the report's `Link` for a dataset, the constructed route for a dataflow (see `coverage.deep_links`). Null is a withheld link, never an absent field."
+          },
+          "owner": {
+           "type": "object",
+           "additionalProperties": false,
+           "properties": {
+            "user_id": {
+             "type": [
+              "string",
+              "null"
+             ]
+            },
+            "name": {
+             "type": [
+              "string",
+              "null"
+             ]
+            }
+           }
+          },
+          "recurring": {
+           "type": [
+            "number",
+            "null"
+           ],
+           "description": "The twin's OWN recurring figure from the same cost model that priced its own candidate row, in `recurring_unit`. Null means not measured, never zero."
+          },
+          "recurring_unit": {
+           "type": [
+            "string",
+            "null"
+           ],
+           "enum": [
+            "credits_per_month",
+            "executions_per_month",
+            "rows_under_management",
+            null
+           ]
+          },
+          "schedule": {
+           "type": [
+            "string",
+            "null"
+           ],
+           "description": "A dataset twin's DomoStats `Schedule`. Null on a dataflow: `Dataflow Details` carries no schedule column and the product path carries a trigger model rather than a schedule string, so this null is NOT-READ and never `unscheduled` (ticket 56). Ticket 44 left the slot open pending that decision; ticket 56 decided against reading it, on a census in which 0 of granite's 26 `duplicated` dataflows carry a time schedule and the trigger kind is identical within 9 of the 10 groups."
+          },
+          "landing_history": {
+           "type": [
+            "string",
+            "null"
+           ],
+           "enum": [
+            "never",
+            "observed",
+            "unknown",
+            null
+           ],
+           "description": "A dataset twin's landing (ticket 43). Null on a dataflow twin, whose landing is its outputs' - see `outputs`."
+          },
+          "last_data_at": {
+           "type": [
+            "string",
+            "null"
+           ],
+           "format": "date-time"
+          },
+          "utilization": {
+           "type": "null",
+           "description": "Always null in the MVP: the collector measures no reach or engagement for any asset. Carried so the block has the shape decision 8 specified and a reader can see the axis was considered and is unmeasured, rather than omitted."
+          },
+          "cards": {
+           "type": [
+            "integer",
+            "null"
+           ],
+           "description": "The twin's card COUNT from the linkage report; summed over outputs for a dataflow twin. Null when the linkage report was unavailable."
+          },
+          "pages": {
+           "type": [
+            "integer",
+            "null"
+           ],
+           "description": "The twin's distinct positive page-id COUNT, with ticket 24's caveat that the source over-reports placement. Never page names."
+          },
+          "name_stem_difference": {
+           "type": "object",
+           "description": "What the two names share and where they differ, as data: longest common prefix and suffix, then each member's own middle. On the instance this was calibrated against the difference was a `GP | ` prefix, which is itself the business fact (a quickstart installed twice). `identical: true` says the names will not help tell the rows apart.",
+           "required": [
+            "identical",
+            "shared_prefix",
+            "shared_suffix",
+            "this_only",
+            "twin_only"
+           ],
+           "additionalProperties": false,
+           "properties": {
+            "identical": {
+             "type": "boolean"
+            },
+            "shared_prefix": {
+             "type": "string"
+            },
+            "shared_suffix": {
+             "type": "string"
+            },
+            "this_only": {
+             "type": "string"
+            },
+            "twin_only": {
+             "type": "string"
+            }
+           }
+          },
+          "producer_dataflow_id": {
+           "type": [
+            "string",
+            "null"
+           ],
+           "description": "Output grain only: the dataflow that produces the twin output."
+          },
+          "outputs": {
+           "type": "array",
+           "description": "Dataflow grain only: the twin dataflow's outputs, each with its own link, landing and card/page counts - a dataflow's cards hang off its outputs, so this is where 'card counts with links' lives for a dataflow twin.",
+           "items": {
+            "type": "object",
+            "required": [
+             "dataset_id",
+             "deep_link",
+             "cards",
+             "pages"
+            ],
+            "additionalProperties": true,
+            "properties": {
+             "dataset_id": {
+              "type": "string"
+             },
+             "asset_name": {
+              "type": [
+               "string",
+               "null"
+              ]
+             },
+             "deep_link": {
+              "type": [
+               "string",
+               "null"
+              ]
+             },
+             "recurring": {
+              "type": [
+               "number",
+               "null"
+              ]
+             },
+             "landing_history": {
+              "type": [
+               "string",
+               "null"
+              ]
+             },
+             "last_data_at": {
+              "type": [
+               "string",
+               "null"
+              ]
+             },
+             "cards": {
+              "type": [
+               "integer",
+               "null"
+              ]
+             },
+             "pages": {
+              "type": [
+               "integer",
+               "null"
+              ]
+             }
+            }
+           }
+          }
+         }
+        }
+       },
+       "duplicate_group_shared_inputs": {
+        "type": "integer",
+        "description": "Ticket 44. The size of the input dataset-id set the members share. Identical across the set by definition of the condition, so this member's count is the set's."
+       },
+       "duplicate_group_realisable": {
+        "type": "object",
+        "description": "Ticket 44. The compared set's saving under the `sum - max` convention `coverage.duplication.realisable_recurring` also uses. An ARITHMETIC CONVENTION FOR THE AGGREGATE - the least the set recovers if any one member is retained - and never a recommendation: ticket 34 found every group on the calibration instance was an equal-cost pair, so a fixture built from that shape cannot tell a correct reduction from an inverted one; the fixtures for this carry an unequal pair. The member the `max` belongs to is deliberately NOT surfaced. Null `recurring` means a member was unmeasured, never that the set is free.",
+        "required": [
+         "recurring",
+         "recurring_unit",
+         "compared_members",
+         "convention"
+        ],
+        "additionalProperties": false,
+        "properties": {
+         "recurring": {
+          "type": [
+           "number",
+           "null"
+          ]
+         },
+         "recurring_unit": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "enum": [
+           "credits_per_month",
+           "executions_per_month",
+           "rows_under_management",
+           null
+          ]
+         },
+         "compared_members": {
+          "type": "array",
+          "description": "This member first, then its twins - the set the figure was computed over. At the dataflow grain that is the PARTNERS rather than the group, because the asymmetric case (one dataflow's whole job a strict subset of another's) puts one member in the group and the twin outside it.",
+          "items": {
+           "type": "string"
+          }
+         },
+         "convention": {
+          "type": "string",
+          "description": "The convention in words, carried on every row so the number never travels without the sentence that stops it reading as advice."
+         }
+        }
+       },
+       "duplicate_cost_comparison": {
+        "type": "string",
+        "description": "Ticket 44 (ticket 25 decision 8). The members' figures read out as one sentence under three rules: EQUAL figures are stated as equal ('Both bill 180.0 credits/month; cost does not choose here'), a DIFFERENCE is stated as a difference and explicitly not as a survivor, and an UNMEASURED figure is said to be unmeasured rather than shown as zero. The first instance whose twins differ will be a stranger's; a silent repetition would let a reader assume a symmetry the next instance will not have."
+       }
+      }
+     },
+     "consumers": {
+      "type": "object",
+      "description": "Downstream attachment. Zero across the board is `unconsumed`.",
+      "additionalProperties": false,
+      "properties": {
+       "cards": {
+        "type": [
+         "integer",
+         "null"
+        ],
+        "description": "From the real card->dataset linkage report, not from `Cards_Powered`, which ticket 02 found unreliable. NULL means the linkage report was unavailable - and null is not zero: treating not-knowing as no-consumers would recommend quarantining a consumed dataset."
+       },
+       "cards_with_no_page_recorded": {
+        "type": [
+         "integer",
+         "null"
+        ],
+        "description": "A FLOOR on unplaced cards: how many of `cards` have no PAGE recorded for them anywhere in `DOMO | Cards and Datasets` - meaning no positive `Page ID` on any of the card's rows. Absent-only cards and all-sentinel cards both count (ticket 58, deciding ticket 48: at the card grain the product path put 20 of 20 sampled from each population on no page), and a card carrying ANY positive id is excluded even where it also carries a sentinel row - 702 cards on the calibration instance, whose sentinel sits beside a placement the product confirms. It is a floor and not a measurement because the source column `Page ID` OVER-REPORTS placement (ticket 24, checked against the product API): a card removed from a page keeps its row, and even positive ids are stale 10-15% of the time in sample - so placement can be proved absent and never proved present. Granite 2026-09-04, every figure re-derived from the shipped query: 277 of 788 card-bearing datasets have every card here (881 cards) and 397 carry a floor above zero, summing to 2,409 dataset-facing cards against a report-wide 2,900 (2,405 absent-only plus 495 sentinel-only); what the column still hides is the stale positives among the 7,842 cards that carry one. Evidence about the CARDS, at the card grain (content pillar); it never reduces `cards` and no condition reads it - a card consumes its dataset whether or not a person can navigate to it, and a drill view is a live consumer on no page at all. For a dataflow it is summed over the outputs, and a sum of floors is a floor. NULL when the linkage report was unavailable; never NULL otherwise, and never greater than `cards`. Replaced `page_reachable_cards` outright (ticket 39): that name claimed a reachability the column cannot establish."
+       },
+       "pages": {
+        "type": [
+         "integer",
+         "null"
+        ],
+        "description": "Distinct POSITIVE page ids the report records for this dataset's cards. The negative range is excluded because it is a sentinel, not a page (ticket 24, corrected at the card grain by ticket 40: a card whose only page evidence is a sentinel was on no page in 20 of 20 sampled, and where such a card IS placed the page is unrelated to the id). A recorded figure, not a measurement: the remaining ids over-report placement by roughly 10%, so this is neither a floor nor a ceiling on the pages a person can reach. NULL when the linkage report was unavailable."
+       },
+       "downstream_dataflows": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       },
+       "distinct_users": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       }
+      }
+     },
+     "utilization": {
+      "type": "object",
+      "description": "Two signals, never merged. Per-card view events badly undercount real usage because a card renders inside a page view without emitting its own event; reach corrects for that by attributing page views down to member cards.",
+      "additionalProperties": false,
+      "properties": {
+       "reach": {
+        "type": [
+         "number",
+         "null"
+        ],
+        "description": "Page views attributed down to this asset over the window."
+       },
+       "reach_percentile": {
+        "type": [
+         "number",
+         "null"
+        ],
+        "description": "Position within THIS instance's distribution. Absolute view thresholds do not survive the instance-size range in the portfolio."
+       },
+       "engagement": {
+        "type": [
+         "number",
+         "null"
+        ],
+        "description": "Direct interaction events (drill, detail, export)."
+       },
+       "engagement_percentile": {
+        "type": [
+         "number",
+         "null"
+        ]
+       }
+      }
+     },
+     "cost": {
+      "type": "object",
+      "description": "MEASURED wherever either metering report is reachable. Ranking is by what stops the meter - quarantine savings - never by object size. A candidate whose recurring saving is zero is reported AT ZERO, never dropped and never sorted to the top: on granite that is the largest population in the pillar, and shown zeroes are what make the non-zero figures credible. Every figure carries its unit; a reader who cannot tell 510 credits from 510 executions is the failure this shape exists to prevent.",
+      "required": [
+       "basis",
+       "recurring_unit"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "basis": {
+        "type": "string",
+        "enum": [
+         "metered-credits",
+         "metered-executions",
+         "none"
+        ],
+        "description": "Which meter produced this figure. Set per candidate because a single run can meter some entities and not others. Replaces the former `is_estimate: const true`, which could not express a metered figure at all, and then the `metered`/`estimated` pair, which could not express WHICH meter."
+       },
+       "basis_detail": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "description": "Provenance a human can check: which meter, which SKUs, over how many metered days - or why nothing could be metered."
+       },
+       "engine": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "description": "On the metered path the engine is carried by the SKU itself, so this is evidence rather than an input to the figure."
+       },
+       "recurring": {
+        "type": [
+         "number",
+         "null"
+        ],
+        "description": "Recurring usage per month that the recommended action stops, in `recurring_unit`. NULL means NOT MEASURED (basis `none`); 0 means measured and genuinely zero. Those two must never be shown to a reviewer as the same thing."
+       },
+       "additional_if_deleted": {
+        "type": [
+         "number",
+         "null"
+        ],
+        "description": "Storage that quarantining does NOT stop, in `additional_if_deleted_unit`. Reported separately so the headline figure stays honest about the action actually being recommended."
+       },
+       "human_triggered": {
+        "type": [
+         "number",
+         "null"
+        ],
+        "description": "Hand-triggered usage, excluded from the recurring figure because it does not recur. On the credits basis this is the `category` column; Usage Metrics has no category and folds it into the SKU name as a `(Manual)` suffix."
+       },
+       "recurring_unit": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "enum": [
+         "credits_per_month",
+         "executions_per_month",
+         "rows_under_management",
+         null
+        ],
+        "description": "Unit of `recurring` and `human_triggered`."
+       },
+       "additional_if_deleted_unit": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "enum": [
+         "credits_per_month",
+         "executions_per_month",
+         "rows_under_management",
+         null
+        ],
+        "description": "Unit of `additional_if_deleted`. `rows_under_management` on the executions basis is a MEAN DAILY STOCK, not a monthly rate - a different reduction because it is a differently-shaped series, never a conversion."
+       },
+       "counted_in_aggregate": {
+        "type": "boolean",
+        "description": "Whether this row's figures are ADDITIVE into an instance-level total. False on every `duplicated` candidate, because that saving belongs to the GROUP: the per-candidate figure stays true - it is what that entity bills, and hiding it would be its own lie - but a reader adding the rows up counts one opportunity once per member per grain, which on granite is 4.0x over. Carried on EVERY candidate rather than only the duplicated ones, so `is this figure additive?` is answerable from any row without knowing the rule. See `coverage.duplication`."
+       }
+      }
+     },
+     "attention": {
+      "type": "string",
+      "enum": ["individual", "grouped", "none"],
+      "description": "How this candidate should be worked: individually, in an owner-and-band group, or not at all because a recorded decision currently suppresses it. Priority and remediation are separate outputs of one policy: a positive-cost failing candidate is individual while its action remains review."
+     },
+     "recommended_action": {
+      "type": "string",
+      "enum": [
+       "quarantine",
+       "review",
+       "decide-which-survives",
+       "none"
+      ],
+      "description": "Administrator-facing next-step guidance. `quarantine` belongs only to an unconsumed candidate with positive recurring saving; measured zero or unmeasured recurring cost says `review`; stale and failing always say `review`; duplicated says `decide-which-survives`; suppression says `none`. Never delete: deletion is a separate later human verdict."
+     },
+     "recommended_action_basis": {
+      "type": "string",
+      "enum": [
+       "suppressed-by-recorded-decision",
+       "duplicate-survivor-needs-judgment",
+       "positive-recurring-saving",
+       "no-recurring-saving",
+       "recurring-cost-not-measured",
+       "condition-needs-review"
+      ],
+      "description": "The named evidence rule that produced recommended_action. Reports render this recorded basis beside the action instead of recomputing or asking a reader to trust an unexplained label."
+     },
+     "rank": {
+      "type": [
+       "integer",
+       "null"
+      ],
+      "description": "Deterministic ordering. Computed by formula, never by the agent."
+     },
+     "ledger": {
+      "type": "object",
+      "description": "Prior-judgement reconciliation, folded from the append-only ledger by code before output. TWO INDEPENDENT AXES over the same candidate_id: `verdict` is the keep/do-not-keep judgement; `lifecycle` is where the asset sits in the quarantine -> delete progression of ADR-0002. Collapsing them breaks the loop in both directions - an `approved` that suppresses never gets acted on, a `quarantined` that does not suppress clogs every future run.",
+      "required": [
+       "suppressed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "suppressed": {
+        "type": "boolean",
+        "description": "Suppressed candidates stay in this file - an admin must be able to see what was hidden and why. They carry rank null and are excluded from headline totals, but their cost is reported as a separate subtotal so a keep-permanent can never quietly hide recurring spend."
+       },
+       "verdict": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "enum": [
+         "keep-permanent",
+         "keep-for-now",
+         "revoked",
+         null
+        ],
+        "description": "`revoked` exists because the ledger is append-only: a mistaken verdict is undone by superseding it, never by editing history."
+       },
+       "verdict_at": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "format": "date-time"
+       },
+       "verdict_by": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "verdict_reason": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "suppress_until": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "format": "date",
+        "description": "keep-for-now only. A cycle is an absolute DATE, not a decrementing counter - runs are on-demand, so three runs in one afternoon must not burn three cycles. Written at verdict time and stored, so changing keep_for_now_cycles never retroactively moves a grant already given."
+       },
+       "cycles_remaining": {
+        "type": [
+         "integer",
+         "null"
+        ],
+        "description": "DERIVED FOR DISPLAY from suppress_until. Never stored in the ledger."
+       },
+       "lifecycle": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "enum": [
+         "approved",
+         "quarantined",
+         "restored",
+         "deleted",
+         null
+        ],
+        "description": "`approved` does NOT suppress - the candidate stays visible as an open action item until the action happens. `restored` is required by ADR-0002's safety net: a wrongly quarantined asset is restored, not recovered, and without this value that restoration happens in the instance but not in the ledger."
+       },
+       "lifecycle_at": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "format": "date-time"
+       },
+       "lifecycle_by": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "lifecycle_reason": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "description": "The reason on the active lifecycle line, preserved so a suppressed candidate's dedicated report section can explain the recorded decision."
+       },
+       "delete_eligible_after": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "format": "date",
+        "description": "quarantined only. The collector reports elapsed time and eligibility; it has no complaint signal and never asserts that a quarantine period elapsed without complaint. That assertion is the human's, recorded by appending `deleted` or `restored`."
+       },
+       "withdrawn": {
+        "type": "boolean",
+        "description": "True only when the latest record operation withdrew an invalid candidate identity. The historical lines remain in the append-only ledger while neither verdict nor lifecycle axis is active."
+       },
+       "withdrawn_at": {
+        "type": ["string", "null"],
+        "format": "date-time"
+       },
+       "withdrawn_by": {
+        "type": ["string", "null"]
+       },
+       "withdrawn_reason": {
+        "type": ["string", "null"]
+       }
+      }
+     },
+     "first_seen_run_id": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Drives change-first reporting: run two leads with what became a candidate since run one, with the full list behind it. A DENORMALIZATION carried forward from the prior findings file, never the source of truth for the diff - derived from it alone, `resolved` and `never existed` are indistinguishable."
+     }
+    }
+   }
+  },
+  "summary": {
+   "type": "object",
+   "description": "Headline counts. Suppressed candidates are counted separately, never folded into the actionable figure - an admin must be able to see what was hidden and why.",
+   "additionalProperties": false,
+   "properties": {
+    "candidates_total": {
+     "type": "integer"
+    },
+    "candidates_actionable": {
+     "type": "integer",
+     "description": "Unsuppressed, and therefore ranked."
+    },
+    "candidates_suppressed": {
+     "type": "integer"
+    },
+    "by_condition": {
+     "type": "object",
+     "additionalProperties": {
+      "type": "integer"
+     }
+    },
+    "by_asset_type": {
+     "type": "object",
+     "additionalProperties": {
+      "type": "integer"
+     }
+    },
+    "by_asset_type_condition": {
+     "type": "object",
+     "additionalProperties": {
+      "type": "integer"
+     }
+    },
+    "assets_with_multiple_conditions": {
+     "type": "integer",
+     "description": "One asset legitimately carries several candidates - `failing` and `unconsumed` co-occur on every dataset that has errored on every attempt. Counted so the candidate total is not mistaken for an asset count."
+    },
+    "run_history_never": {
+     "type": "integer",
+     "description": "Candidates whose asset has never run. They arrive at `unconsumed` from a very different direction than an asset that went quiet, and this is the likeliest source of false positives in the sample review."
+    },
+    "landing_history_never": {
+     "type": "integer",
+     "description": "Ticket 54. Candidates whose dataset has never held a row. Counted beside `run_history_never` and never folded into it, because the two populations overlap without nesting: on granite 45 datasets never attempted a run AND never landed, 3 attempted and landed nothing, and 18 DATAFLOWS never ran and have no landing to report at all. `unknown` is excluded - a dataset the enumeration did not describe is not a dataset known to be empty. The `never-landed` band carries the same population but is per-instance config and reconfigurable; this counter is the artifact's census of it, and is what the completion summary prints."
+    }
+   }
+  },
+  "reconciliation": {
+   "type": "object",
+   "description": "The change report against run.prior_run_id, computed by loading the prior findings file and comparing by candidate_id. Absence is never evidence of success: a candidate is `resolved` only if its asset was POSITIVELY OBSERVED in this run's population and no longer meets the condition. A dataflow missing from `Dataflow Details` because the Governance report failed to refresh must never be reported as resolved.",
+   "required": [
+    "counts",
+    "material_shift"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "counts": {
+     "type": "object",
+     "required": [
+      "new",
+      "returned",
+      "still_open",
+      "resolved",
+      "removed",
+      "retired",
+      "disappeared",
+      "unverifiable",
+      "suppressed"
+     ],
+     "additionalProperties": false,
+     "properties": {
+      "new": {
+       "type": "integer",
+       "description": "Not a candidate in the prior run, and no expired verdict."
+      },
+      "returned": {
+       "type": "integer",
+       "description": "OFF the actionable list in the prior run and ON it now, because a human verdict stopped applying: a keep-for-now that lapsed, a quarantine restored, a verdict revoked. Decided by the PRIOR record's `ledger.suppressed`, not by the ledger's current state - an edge, not a level, so a lapse is announced in the one run where it happened rather than in every run thereafter. The most informative line in any run after the first."
+      },
+      "still_open": {
+       "type": "integer"
+      },
+      "resolved": {
+       "type": "integer",
+       "description": "Asset observed; condition no longer met."
+      },
+      "removed": {
+       "type": "integer",
+       "description": "The candidate left because the asset is absent from the complete current presence source. This is an observed state, not a claim that the collector witnessed a delete action."
+      },
+      "retired": {
+       "type": "integer",
+       "description": "Removed this run after an approved, quarantined or deleted lifecycle record. The evidence closes the loop without requiring a second manual ledger update."
+      },
+      "disappeared": {
+       "type": "integer",
+       "description": "Asset absent from a population whose pillar coverage is `ok`. Probably deleted. Reported, not celebrated."
+      },
+      "unverifiable": {
+       "type": "integer",
+       "description": "Asset absent and that pillar's coverage is partial or blocked. Says nothing."
+      },
+      "suppressed": {
+       "type": "integer"
+      }
+     }
+    },
+    "returned": {
+     "type": "array",
+     "description": "Every `returned` candidate BY NAME, with the verdict that stopped applying. `new`, `suppressed` and `still_open` are each recoverable from the candidate records themselves; `returned` is recoverable from nothing, so it is named here.",
+     "items": {
+      "$ref": "#/$defs/reconciliationEntry"
+     }
+    },
+    "resolved": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/reconciliationEntry"
+     }
+    },
+    "removed": {
+     "type": "array",
+     "description": "One-run removal transitions without a lifecycle state that makes them successful retirement. Includes removed-without-recorded-decision and removals contradicting a keep/restoration decision.",
+     "items": {
+      "$ref": "#/$defs/reconciliationEntry"
+     }
+    },
+    "retired": {
+     "type": "array",
+     "description": "Ledger-backed removals first confirmed in this run. Later runs carry them in retirement_register without re-announcing the transition.",
+     "items": {
+      "$ref": "#/$defs/retirementEntry"
+     }
+    },
+    "disappeared": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/reconciliationEntry"
+     }
+    },
+    "unverifiable": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/reconciliationEntry"
+     }
+    },
+    "retirement_register": {
+     "type": "array",
+     "description": "Persistent terminal register for real candidates whose approved/quarantined/deleted state was followed by observed removal. It replaces the permanent unmatched-verdict failure mode while keeping completed cleanup auditable.",
+     "items": {
+      "$ref": "#/$defs/retirementEntry"
+     }
+    },
+    "lifecycle_exceptions": {
+     "type": "array",
+     "description": "Persistent contradictions between ledger intent and current presence: deleted but still present, retired then present again, or removed despite a keep/restoration decision.",
+     "items": {
+     "$ref": "#/$defs/lifecycleException"
+     }
+    },
+    "established_ledger_ids": {
+     "type": "array",
+     "description": "Compact identity memory for active ledger records proven by a current or prior findings artifact. It prevents a real candidate that temporarily stops meeting its condition from becoming an unmatched typo if the asset is removed later.",
+     "items": {"type": "string"},
+     "uniqueItems": true
+    },
+    "material_shift": {
+     "type": "object",
+     "description": "Ticket 72. The material line THIS run measured every `population[*].material` against, recorded in the document rather than read out of config by whoever quotes it - the defect tickets 51 and 59 named, a figure whose basis is absent from the artifact that carries it. ONE block for the whole comparison, not a `threshold` per population entry: `is_material` is a single test over every condition, and a per-entry copy would assert a measurement on the entries where none was taken - a condition in `conditions_unavailable`, a baseline run whose `prior` is null, and the `prior: 0` case where only `min_candidates` can apply. ABSENT means the run never recorded its line: every granite run through `granite-2026-09-03-001` predates this field, and absence is not a line of zero, which is the real (if useless) configuration `{min_candidates: 0, min_pct: 0}` under which every movement is material. Should a per-condition line ever be calibrated it grows a key beside these two floors, which is additive; rebuilding N per-entry copies into a shape they never fitted is not.",
+     "required": [
+      "min_candidates",
+      "min_pct"
+     ],
+     "additionalProperties": false,
+     "properties": {
+      "min_candidates": {
+       "type": "integer",
+       "description": "The absolute floor: candidates the population must move by. Copied from `reconciliation.material_shift.min_candidates` in config, and it is the value `is_material` applied, not the value config holds now."
+      },
+      "min_pct": {
+       "type": "number",
+       "description": "The relative floor: |delta| as a percentage of the PRIOR count. Never applied when the prior count is zero - a condition appearing from nothing clears it by definition - so an entry with `prior: 0` was judged on `min_candidates` alone."
+      }
+     }
+    },
+    "population": {
+     "type": "object",
+     "description": "Ticket 42. Per condition: how many candidates the prior run scored, how many this run scored, and whether the movement is MATERIAL under the `reconciliation.material_shift` line recorded beside this table (ticket 72; it was config-only, and a stored run could not say what `material: false` meant). Over every candidate, suppressed included - a verdict changes what is recommended, not what a condition's population is. `prior` and `delta` are null on a baseline run. A condition that could not be evaluated this run is listed with `condition_unavailable: true` and is never material: its prior candidates are already `unverifiable`, and the drop is the absence of a test, not a population movement.",
+     "additionalProperties": {
+      "type": "object",
+      "required": [
+       "prior",
+       "current",
+       "delta",
+       "material",
+       "condition_unavailable"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "prior": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       },
+       "current": {
+        "type": "integer"
+       },
+       "delta": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       },
+       "delta_pct": {
+        "type": [
+         "number",
+         "null"
+        ],
+        "description": "|delta| as a percentage of the prior count, 1dp; null when the prior count is zero or there is no prior run."
+       },
+       "material": {
+        "type": "boolean"
+       },
+       "condition_unavailable": {
+        "type": "boolean"
+       }
+      }
+     }
+    },
+    "notes": {
+     "type": "array",
+     "description": "Ticket 42. NAMED notes about the change report itself. Today one name exists, `material-population-shift`: a condition's population moved past the material line, and the note carries how each input fingerprint moved in the same run. The note records coincidence and never cause - the wording is the deliverable. Explanatory only: nothing here suppresses, alters or re-scores a candidate.",
+     "items": {
+      "type": "object",
+      "required": [
+       "name",
+       "condition",
+       "prior",
+       "current",
+       "delta",
+       "threshold",
+       "prior_fingerprints",
+       "detail"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "name": {
+        "type": "string",
+        "enum": [
+         "material-population-shift"
+        ]
+       },
+       "condition": {
+        "type": "string"
+       },
+       "prior_run_id": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "prior": {
+        "type": "integer"
+       },
+       "current": {
+        "type": "integer"
+       },
+       "delta": {
+        "type": "integer"
+       },
+       "delta_pct": {
+        "type": [
+         "number",
+         "null"
+        ]
+       },
+       "threshold": {
+        "type": "object",
+        "description": "The material line the movement was judged against, carried on the note so it stays readable when the note is lifted out and quoted on its own. Identical to `reconciliation.material_shift` by construction - one reader produces both, and `test_reconcile.py::TestTheRecordedMaterialLine` asserts they agree - so it is a copy for the reader's convenience and never a second source.",
+        "required": [
+         "min_candidates",
+         "min_pct"
+        ],
+        "additionalProperties": false,
+        "properties": {
+         "min_candidates": {
+          "type": "integer"
+         },
+         "min_pct": {
+          "type": "number"
+         }
+        }
+       },
+       "prior_fingerprints": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "enum": [
+         "present",
+         "absent",
+         null
+        ],
+        "description": "`absent` when the prior run predates `coverage.input_fingerprints`. Then no input comparison exists, and the detail says so rather than reading as unchanged. Null when this run captured no fingerprints at all."
+       },
+       "inputs": {
+        "type": [
+         "object",
+         "null"
+        ],
+        "description": "Movement per input against the prior run: unchanged, changed, unavailable-in-both, became-unavailable, became-available, or not-recorded-in-prior.",
+        "additionalProperties": {
+         "type": "string",
+         "enum": [
+          "unchanged",
+          "changed",
+          "unavailable-in-both",
+          "became-unavailable",
+          "became-available",
+          "not-recorded-in-prior"
+         ]
+        }
+       },
+       "versions": {
+        "type": "object",
+        "description": "`collector_version` and `config_version` on both sides. Compared because a scoring change is the third explanation a reviewer must weigh, and on granite the 008 -> 009 shift was one under an unmoved collector_version - so an unmoved stamp is evidence of little, and the note says so.",
+        "additionalProperties": {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "prior": {
+           "type": [
+            "string",
+            "null"
+           ]
+          },
+          "current": {
+           "type": [
+            "string",
+            "null"
+           ]
+          }
+         }
+        }
+       },
+       "review_frame": {
+        "type": "string",
+        "description": "Ticket 42 decision 5: what a material shift means for a sample-review frame drawn from the prior population. Not an automatic re-review - a supplementary stratum over the moved candidates."
+       },
+       "detail": {
+        "type": "string",
+        "description": "The reviewer-facing sentence. Names the movement, names what the inputs did in the same run, and never asserts that one caused the other."
+       }
+      }
+     }
+    },
+    "unmatched_verdicts": {
+     "type": "array",
+     "description": "Ledger lines whose candidate_id is well-formed but corresponds to no asset this run ever saw - a typo, or an identity that shifted between runs. Never crash on these, never silently ignore them.",
+     "items": {
+      "type": "object",
+      "required": [
+       "candidate_id",
+       "axis",
+       "value"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "candidate_id": {
+        "type": "string"
+       },
+       "axis": {
+        "type": "string",
+        "enum": [
+         "verdict",
+         "lifecycle"
+        ]
+       },
+       "value": {
+        "type": "string"
+       },
+       "at": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "format": "date-time"
+       },
+       "by": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "asset_name_at_verdict": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "description": "Recorded in the ledger precisely so this case produces a message a human can act on rather than a bare UUID."
+       }
+      }
+     }
+    }
+   }
+  },
+  "watch_list": {
+   "type": "array",
+   "description": "Assets quarantined by a prior verdict, awaiting the separate later deletion decision of ADR-0002. Suppressed from `candidates` but never invisible - someone has to come back at delete_eligible_after and make the call. Derived from the ledger; kept in this file rather than a second artifact, because a second file is a second thing to forget.",
+   "items": {
+    "type": "object",
+    "required": [
+     "candidate_id",
+     "asset_type",
+     "asset_id",
+     "asset_name",
+     "quarantined_at",
+     "delete_eligible_after"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "candidate_id": {
+      "type": "string"
+     },
+     "asset_type": {
+      "type": "string",
+      "enum": [
+       "dataset",
+       "dataflow",
+       "card",
+       "page",
+       "app",
+       "user"
+      ]
+     },
+     "asset_id": {
+      "type": "string"
+     },
+     "asset_name": {
+      "type": "string"
+     },
+     "quarantined_at": {
+      "type": "string",
+      "format": "date-time"
+     },
+     "quarantined_by": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "delete_eligible_after": {
+      "type": "string",
+      "format": "date"
+     },
+     "delete_eligible": {
+      "type": "boolean",
+      "description": "Elapsed time only. NOT a statement that no complaint was received - the collector has no complaint signal."
+     },
+     "still_present": {
+      "type": [
+       "boolean",
+       "null"
+      ],
+      "description": "Whether the asset was observed in this run at all. False on a coverage-ok run suggests it was deleted outside the ledger."
+     },
+     "recurring_at_quarantine": {
+      "type": [
+       "number",
+       "null"
+      ],
+      "description": "What the quarantine was expected to stop, in the run's `cost_model.recurring_unit` - kept so the saving can be reviewed against the instance total later. Currently declared and never written by any code path. Renamed from `estimated_credits_per_month_at_quarantine` by ticket 29: `estimated` is no longer a basis (the rate card it named is deleted) and `credits` is no longer the only unit, so a writer added later must not inherit either assumption from a field name."
+     }
+    }
+   }
+  }
+ },
+ "$defs": {
+  "inputFingerprint": {
+   "type": "object",
+   "description": "One input's fingerprint (ticket 42): a state, a SHA-256 over the input's canonical sorted rows, and a few counts. `present` with a hash over zero rows is an input that loaded and was empty. `unavailable` is an input that was never read, with `why` saying which of the ways that happens it was; `sha256` and `counts` are then null, so an unavailable input can never compare equal to - or different from - a present one.",
+   "required": [
+    "state",
+    "sha256",
+    "counts",
+    "why"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "state": {
+     "type": "string",
+     "enum": [
+      "present",
+      "unavailable"
+     ]
+    },
+    "sha256": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "pattern": "^[0-9a-f]{64}$"
+    },
+    "counts": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "description": "A handful of counts describing the input's size - how many rows, how many edges, how many flagged - so a changed hash comes with a rough sense of how much changed. Never rows.",
+     "additionalProperties": {
+      "type": "integer"
+     }
+    },
+    "why": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "description": "Present exactly when `state` is `unavailable`: which way the input was unavailable, in the reviewer's words."
+    }
+   }
+  },
+  "reconciliationEntry": {
+   "type": "object",
+   "required": [
+    "candidate_id",
+    "asset_name",
+    "condition"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "candidate_id": {
+     "type": "string"
+    },
+    "asset_type": {
+     "type": "string",
+     "enum": [
+      "dataset",
+      "dataflow",
+      "card",
+      "page",
+      "app",
+      "user"
+     ]
+    },
+    "asset_id": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "asset_name": {
+     "type": "string"
+    },
+    "condition": {
+     "type": "string",
+     "enum": [
+      "orphaned",
+      "stale",
+      "failing",
+      "unconsumed",
+      "duplicated",
+      "low-reach",
+      "inactive"
+     ]
+    },
+    "first_seen_run_id": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "last_seen_run_id": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "coverage_reason": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "description": "unverifiable only: why that pillar could not confirm the asset either way."
+    },
+    "returned_from": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "description": "returned only: which verdict stopped applying, when, and who gave it. A lapsed March grant and a quarantine reversed yesterday demand different next moves."
+    },
+    "removal_reason": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "enum": [
+      "removed-without-recorded-decision",
+      "removed-despite-keep-or-restoration",
+      null
+     ],
+     "description": "removed only: whether the current inventory exposed an unrecorded action or a contradiction with an active keep/restoration decision."
+    }
+   }
+  },
+  "retirementEntry": {
+   "type": "object",
+   "required": [
+    "candidate_id",
+    "asset_type",
+    "asset_id",
+    "asset_name",
+    "condition",
+    "state_first_seen_run_id",
+    "recorded_lifecycle"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "candidate_id": {"type": "string"},
+    "asset_type": {"type": "string", "enum": ["dataset", "dataflow", "card", "page", "app", "user"]},
+    "asset_id": {"type": "string"},
+    "asset_name": {"type": "string"},
+    "condition": {"type": "string", "enum": ["orphaned", "stale", "failing", "unconsumed", "duplicated", "low-reach", "inactive"]},
+    "state_first_seen_run_id": {"type": "string"},
+    "recorded_lifecycle": {"type": "string", "enum": ["approved", "quarantined", "deleted"]}
+   }
+  },
+  "lifecycleException": {
+   "type": "object",
+   "required": ["candidate_id", "asset_type", "asset_id", "asset_name", "condition", "state_first_seen_run_id", "recorded_lifecycle", "kind", "detail"],
+   "additionalProperties": false,
+   "properties": {
+    "candidate_id": {"type": "string"},
+    "asset_type": {"type": "string", "enum": ["dataset", "dataflow", "card", "page", "app", "user"]},
+    "asset_id": {"type": "string"},
+    "asset_name": {"type": "string"},
+    "condition": {"type": "string", "enum": ["orphaned", "stale", "failing", "unconsumed", "duplicated", "low-reach", "inactive"]},
+    "state_first_seen_run_id": {"type": "string"},
+    "recorded_lifecycle": {"type": ["string", "null"], "enum": ["approved", "quarantined", "restored", "deleted", null]},
+    "kind": {"type": "string", "enum": ["deletion-not-observed", "retired-asset-present", "removed-despite-keep-or-restoration"]},
+    "detail": {"type": "string"}
+   }
+  }
+ }
+}

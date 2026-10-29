@@ -1,0 +1,543 @@
+# Default thresholds. Ship-as-is defaults so a subsidiary administrator can run untouched;
+# override per instance in instances/<instance>/config.yaml.
+
+version: "0.4.2"
+
+# CALIBRATION - what each number is based on, and whether an instance may move it.
+# Calibrated does NOT mean "proven optimal"; it means every number carries a recorded basis
+# and none is a bare guess. Ticket 19's sample review can still send any of them back.
+#
+#   basis: distribution      derived from granite run one's actual distribution
+#          business-meaning  a defensible definition, not a tuned number
+#          unexercised       no candidate has ever tripped it; the pillar does not run yet
+#          measured          read from the instance rather than chosen
+#          contractual       fixed by a contract, not by us
+#          operational       a team's own working choice
+#
+#   scope: fixed         instances must NOT move it - cross-instance counts stay comparable
+#          per-instance  legitimately differs; a contractual or operational fact
+#
+#   measured: <date>  WHEN the figures quoted in this entry's note were taken off an
+#                     instance. Required wherever a note quotes one (ticket 26). A figure
+#                     read off a live instance is a DATED OBSERVATION, never an invariant,
+#                     and without a date it reads as one and rots silently. The size of the
+#                     effect: on 2026-09-01, four days after they were recorded, granite's
+#                     stale median had moved 804 -> 808 days and its 90-120d band 144 -> 117
+#                     candidates. Nothing was wrong; time passed. A number with no date
+#                     cannot tell a reader which of those two things happened. This does not
+#                     make the entry stale - the DECISION stands on its reasoning, and the
+#                     figures are the evidence that was in hand when it was made.
+#
+# Why so few knobs are per-instance: if an instance can pick its own staleness, "granite has
+# 1,547 stale objects and Strongwell has 200" stops being a sentence. An administrator who
+# wants a shorter list gets it by working the individual decisions, never by moving the definition.
+# See .scratch/instance-cleanup-mvp/issues/10-calibrate-thresholds.md.
+calibration:
+  conditions.stale.dataset_days:
+    basis: business-meaning
+    scope: fixed
+    measured: 2026-08-28
+    note: >-
+      One quarter with no successful refresh. The number is NOT the lever and the run-one
+      distribution proves it: granite's stale population has a median age of 804 days, only
+      144 of 1,547 candidates sit in the 90-120d band, and raising the window to 180 hides
+      249 objects (16%) while 730 still leaves 869. Granite is not full of things that went
+      stale last quarter; it is full of things that died two years ago. 90 stays because it
+      is a defensible definition, not because it was tuned. Ticket 26 changed how an age is
+      computed - from a wall clock to the run's date - which moves any single age by at most
+      one day and left these figures standing: the population is the same population, and
+      re-measuring would only replace one dated observation with another that is wrong again
+      next week. Hence `measured` above rather than a new set of numbers.
+  conditions.stale.dataflow_days:
+    basis: business-meaning
+    scope: fixed
+    measured: 2026-08-28
+    note: Same window as datasets, same reasoning. Dataflow median staleness is 770 days.
+  conditions.failing.consecutive_failures:
+    basis: business-meaning
+    scope: fixed
+    note: >-
+      One failed ATTEMPT is a true statement about the object's current state. A threshold
+      above 1 would be asserting how much failure is acceptable, which is a human's call at
+      review time, not the collector's at scoring time.
+  conditions.duplicated.require_different_producers:
+    basis: business-meaning
+    scope: fixed
+    measured: 2026-08-28
+    note: >-
+      Structural, not tuned. A dataflow's own sibling outputs read the same inputs and often
+      share a schema; they are a deliberate multi-output split, not duplicates of each other.
+      Dropping this rule takes granite's output grain from 15 groups / 38 outputs to 35 / 82.
+  triage.head.select:
+    basis: business-meaning
+    scope: fixed
+    measured: 2026-09-02
+    note: >-
+      The individual-decision set is defined by ATTENTION, not by recommended action (ticket
+      67). `recurring_cost_above_zero` was chosen by ticket 10 before `duplicated` existed; a
+      duplicate needs individual attention because choosing a survivor is a pairwise business
+      judgment, and a bulk yes over one owner's band is 18 independent decisions wearing a
+      batch's clothes. Widening to "recurring saving above zero OR duplicated" keeps one rule
+      for individual attention rather than bolting an exception onto the grouped path. The
+      selector name remains for artifact compatibility. Measured on granite: run 010 goes 84 ->
+      134 candidates over 82 -> 132 assets, of 25 duplicate groups 7 were already entirely in
+      the head and 18 entirely in the backlog with none split; run 2026-09-02-001 (2,724
+      candidates) reproduces 84 -> 134 / 82 -> 132 exactly. Costs 50 rows on granite.
+  conditions.duplicated.require_typed_column_sets:
+    basis: business-meaning
+    scope: fixed
+    measured: 2026-08-28
+    note: >-
+      Structural. Input-set identity alone is weak when the set is small - sharing your only
+      input is common and innocent - and this axis is what fixes it. Measured on granite:
+      input-set + engine alone gives 23 groups / 85 dataflows, twelve of which add something
+      and SIX of those are false positives; adding this axis gives 10 / 26 and exactly the
+      three real pairs.
+  conditions.duplicated.require_non_empty_input_set:
+    basis: business-meaning
+    scope: fixed
+    measured: 2026-08-28
+    note: >-
+      Structural, and the same ruling that put connector-import duplication out of scope: the
+      input dataset-id set is what turns "same shape" into "same job", and an import has none.
+      Free on granite - the numbers are identical either way, 10 of whose 371 population
+      dataflows have outputs but no observed inputs - and a guard everywhere else.
+  conditions.unconsumed.adjudication_growth_pct:
+    basis: operational
+    scope: per-instance
+    measured: 2026-09-08
+    note: >-
+      Chosen starting policy, not an empirically calibrated limit: warn on growth of at
+      least 25 percent versus the immediately preceding comparable run. No absolute floor;
+      any increase from zero warns without a percentage. Same collector/config versions
+      and usable consumption coverage are required. Otherwise comparison is unavailable.
+      Never cap adjudication. Count growth is workload, not a latency diagnosis. Historical
+      observations were 0.13-0.25s per contested dataset, giving 11-21 minutes for 5,000;
+      these are historical bounds, not a rate forecast. Actual elapsed time is always shown.
+  conditions.duplicated.read_names:
+    basis: business-meaning
+    scope: fixed
+    measured: 2026-08-28
+    note: >-
+      Names are read NOWHERE. ~28% ambiguous on granite (371 live dataflows, 267 distinct
+      names) and, once input-set identity is required, they add nothing: the typed-column axis
+      reproduces a name-based key's result exactly, 6 unflagged either way.
+  conditions.low_reach.reach_percentile_below:
+    basis: unexercised
+    scope: fixed
+    measured: 2026-08-28
+    note: >-
+      NEVER EXERCISED. Reach and engagement are card/page signals and the content pillar is
+      out of the MVP. The percentile form is still the right one and the reasoning survives
+      untouched: absolute view floors do not survive the portfolio's instance-size range
+      (Altimate's activity log holds 162K page views; Strongwell's entire log is 69K rows).
+      Recalibrate against a real distribution when the content pillar lands - not before.
+  conditions.low_reach.engagement_percentile_below:
+    basis: unexercised
+    scope: fixed
+    note: NEVER EXERCISED. See reach_percentile_below.
+  conditions.low_reach.minimum_age_days:
+    basis: unexercised
+    scope: fixed
+    note: NEVER EXERCISED. Guards a condition that does not run in the data pillar.
+  conditions.inactive.last_login_days:
+    basis: unexercised
+    scope: fixed
+    measured: 2026-08-28
+    note: >-
+      NEVER EXERCISED - the user pillar is out of the MVP. Sanity-checked against granite's
+      22 candidate owners on 2026-08-28: 7 sit past this line but hold only 68 assets
+      between them, and the marginal case (211 days) is a current employee. The line looks
+      plausible; it has not been calibrated.
+  triage.bands:
+    basis: distribution
+    scope: fixed
+    measured: 2026-08-28
+    note: >-
+      Fixed and human-legible rather than per-instance quantiles. Deriving bands from each
+      instance's own distribution is the same mistake as an instance-local staleness window
+      one level up: it makes two instances incomparable and moves the bands between runs.
+  cost_model.window_days:
+    basis: business-meaning
+    scope: fixed
+    note: Deliberately matches the stale window so the two figures describe the same period.
+  cost_model.basis:
+    basis: measured
+    scope: per-instance
+    measured: 2026-08-28
+    note: >-
+      WHICH METER, not measured-or-guessed. A capability rather than a choice, and it is
+      resolved by preflight at run time rather than read from this file - the value here is
+      the shipped default for an instance that has not been probed yet.
+
+      `metered-credits` where the instance can read its own `Credit Usage`, which is a
+      CUSTOMER-LEVEL report held by whoever holds the contract (granite: yes; a subsidiary:
+      almost certainly not). `metered-executions` where it cannot but can read
+      `Usage Metrics`, which is per-instance and present on 10 of 11 subsidiaries - figures
+      in executions per month, NEVER converted to credits. `none` where neither is readable.
+
+      There is no fourth state and no modelled one. The rate card that used to sit under
+      this key is deleted, not demoted: it never produced a figure (it prices an
+      output-execution and the report roster carries no windowed run count), and the thing
+      it would have predicted - credits consumed per execution - is the ONLY thing that
+      varies, by 4.9x across the portfolio at a single price and by 2.5x inside granite
+      within a year. See issue 20.
+  ledger.cycle_days:
+    basis: operational
+    scope: per-instance
+    note: A review cadence is a team's own; nothing compares across instances depends on it.
+  ledger.keep_for_now_cycles:
+    basis: operational
+    scope: per-instance
+    note: How long a deferral lasts is the reviewing team's call.
+  ledger.quarantine_period_days:
+    basis: business-meaning
+    scope: fixed
+    note: >-
+      Matches the stale window. A shorter period per instance would mean "waited long enough"
+      meant different things in two instances' delete decisions.
+  cadence.mode:
+    basis: operational
+    scope: per-instance
+  reconciliation.material_shift:
+    basis: distribution
+    scope: fixed
+    measured: 2026-09-02
+    note: >-
+      Covers both `min_candidates` (20) and `min_pct` (5). Calibrated against granite's
+      twelve recorded runs, 2026-08-28 to 2026-09-01. MUST FIRE: 008 -> 009 moved
+      `unconsumed` +194 (790 -> 984, 24.6%), the shift this ticket exists to explain - and,
+      by the same rule, the -13/+13 `unconsumed` moves of 2026-09-01 (1.6%) and the +1
+      `stale` in 009 do NOT fire. MUST NOT FIRE: a single-asset change moves a condition by
+      one candidate per asset (asset+condition identity), a handful when a dataflow's outputs
+      go dead with it, so 20 is an order of magnitude above ordinary one-off movement and
+      well below the smallest shift anyone has had to explain. The relative floor exists for
+      small instances: 20 of 1,547 granite `stale` is 1.3% and stays quiet; 20 of 100 on a
+      subsidiary is a fifth of the population and should not. A condition appearing from
+      nothing (0 -> 64 `duplicated` on 2026-09-01) is material by definition. Every recorded
+      same-code, same-day pair on granite moved by exactly 0, so no ordinary between-run
+      noise floor is observable yet; revisit when a monthly cadence has produced one.
+  reporting.report_document:
+    basis: operational
+    scope: per-instance
+
+# POPULATION FILTER - runs BEFORE any condition. An object whose run history is ABSENT (as
+# opposed to zero) never executes by design and is not scored by anything, including
+# `unconsumed`. On granite this is exactly the 3 DATAFUSION objects, which declare
+# `Number of Outputs: 1` while carrying zero output-dataset rows and report
+# `Last Execution State: SUCCESS` having never run. Nothing is lost: their output datasets
+# carry real run dates and are scored as ordinary dataset candidates.
+# See docs/adr/0003-absent-is-not-zero.md and issues/18-never-executed-objects.md.
+population:
+  exclude_non_executing: true       # absent run history => not a runnable object
+  # Structural, not a name list. The engine names below are an ASSERTION, not the filter: the
+  # collector states that the set tripping the structural rule is exactly these, and a
+  # mismatch on another instance raises a coverage exception naming the new object class
+  # rather than silently scoring it as an abandonment.
+  assert_non_executing_engines: [DATAFUSION]
+
+conditions:
+  stale:
+    dataset_days: 90            # no successful refresh in N days
+    dataflow_days: 90           # no successful execution in N days
+    # An object that has NEVER run has an undefined age, not an infinite one. It is
+    # not-applicable here and produces no `stale` candidate - `unconsumed` already catches it,
+    # and a second candidate reading "has not refreshed in 90 days" about a thing that never
+    # refreshed at all is a false positive against ticket 08's gate.
+    never_run_is_stale: false
+  failing:
+    consecutive_failures: 1     # last execution ATTEMPT errored
+    # An object that has errored on every attempt and never completed a run IS failing. On
+    # granite that is 18 datasets reporting Status=ERROR with no Last_Run_Date - 9 of them
+    # netsuite-jdbc connections created Mar-Jun 2026 that have never once succeeded. They also
+    # score `unconsumed`; two candidates for one asset is the asset+condition model working.
+    require_completed_run: false
+  duplicated:
+    # NO THRESHOLD, and that is the point: duplication here is identity of INPUTS and SHAPE,
+    # never similarity of names. Four axes, all already in hand - the producing dataflows
+    # must DIFFER, the producers' input dataset-id sets must be identical, the engine must
+    # match, and the outputs' typed column sets must match. Nothing to tune, so nothing here
+    # is a number.
+    #
+    # All four switches below document a STRUCTURAL rule rather than offering a knob. They
+    # exist because each one, turned off, is a false positive somebody actually found on
+    # granite - and an instance that thinks it wants to relax one should have to read why.
+    require_different_producers: true   # else a dataflow's own sibling outputs pair with
+                                        # each other: producer 622's two `ReadySignal` calcs
+                                        # differ only by a filter; producer 483's three
+                                        # `NS Help Desk` outputs hold 0, 6 and 7,212 rows.
+    require_typed_column_sets: true     # else `Ticket Snapshot` pairs with `Created vs.
+                                        # Resolved Issues` on a single shared input. TYPED,
+                                        # not named: `Amount` as STRING and as DOUBLE are
+                                        # different objects with the same column list.
+    require_non_empty_input_set: true   # the input set is what turns "same shape" into
+                                        # "same job". An object with no inputs has no job
+                                        # identity - the same ruling that put connector-
+                                        # import duplication out of scope.
+    read_names: false                   # documents intent; there is no knob. Names are ~28%
+                                        # ambiguous on granite AND unnecessary - the typed-
+                                        # column axis reproduces a name-based key exactly.
+  unconsumed:
+    # zero across every consumer type; no threshold to tune
+    include_intermediate: true  # when every downstream path ends without a real consumer
+    # Consumption is a property of the PRESENT, so run history is irrelevant to this test:
+    # a never-run object is unconsumed under the same word as one that lost its last reader
+    # last month. There is no separate `never-run` condition. A dataflow with zero outputs is
+    # unconsumed vacuously and that is the right finding. Every `unconsumed` candidate carries
+    # evidence.run_history so the reviewer can tell the two arrivals apart.
+    run_history_is_irrelevant: true   # documents intent; there is no knob to turn here
+    # A WARNING threshold, never a cap (ticket 28 decision 6, ADR-0004). The bounded lineage
+    # pass spends one call per contested dataset - governance says no consumer, the dataset
+    # enumeration says there is one - and a cap's failure mode is downgrading real consumption
+    # evidence to `unknown`, which is the exact defect the pass exists to close.
+    adjudication_growth_pct: 25
+  # ---- NEVER EXERCISED ------------------------------------------------------------------
+  # Everything below scores CARD, PAGE and USER assets. The MVP runs the data pillar only, so
+  # no candidate has ever tripped these and no number here has been calibrated against a real
+  # distribution. They are kept rather than deleted because the reasoning behind their SHAPE
+  # is settled and worth not re-deriving; only the numbers are open. Calibration is per key,
+  # not per file - see the `calibration:` block above.
+  low_reach:
+    # Expressed as a percentile of THIS instance's own distribution, not an absolute count.
+    # Absolute view floors do not survive the portfolio's instance-size range: Altimate's
+    # activity log holds 162K page views; Strongwell's entire log is 69K rows.
+    mode: percentile            # percentile | absolute
+    reach_percentile_below: 10
+    engagement_percentile_below: 10
+    require_both: true          # low on ONE signal is not a candidate
+    minimum_age_days: 90        # never flag something too new to have accumulated views
+  inactive:
+    last_login_days: 180
+
+# TRIAGE - how the findings are presented, not what is found. Nothing here changes which
+# candidates exist; it changes which of them a human is asked to decide about one at a time.
+#
+# Run one produced 2,475 candidates over 1,727 assets, and the shape of that population is
+# two different jobs, not one long list:
+#
+#   * 63 assets carry recurring metered credits. Ordered, worked individually, census-reviewed.
+#   * 1,664 assets carry none. Grouped by owner - granite's whole backlog is six conversations.
+#
+# Cost cannot order the second group, and not by accident: an object that is stale is not
+# running, and an object that is not running bills nothing. Of the 63 costed assets, 61 are
+# `unconsumed` only and exactly one carries a second condition. Cost and staleness are
+# near-disjoint by construction, so a single cost-ranked list leaves 2,411 candidates tied at
+# zero in no meaningful order.
+triage:
+  # Individual decisions: every asset with a recurring saving, not a round number. The set
+  # falls out of the data rather than being chosen, and it is a CENSUS - which is what lets
+  # ticket 08's gate of zero false positives in the cost stratum mean anything.
+  head:
+    # Widened by ticket 44 (ticket 25 decision 6): a `duplicated` candidate needs individual
+    # attention because `decide-which-survives` is worked one pair at a time and cannot be
+    # given as a bulk yes over an owner's band. Ticket 67 separates this attention output
+    # from the recommended action while producing both from one policy. The selector name is
+    # retained as artifact/config compatibility. See calibration.triage.head.select.
+    select: recurring_cost_above_zero_or_duplicated
+    # Deterministic cascade. `candidate_id` stays the final key so two runs over identical
+    # data rank identically (ADR-0001). A composite severity score was rejected: a weighted
+    # sum of cost, age and consumer count is a guess wearing a number's clothes.
+    # Unit-NEUTRAL key names. The cascade is lexicographic, so it is unchanged by which
+    # meter ran: key one is the recurring figure (credits/month or executions/month) and key
+    # two the storage figure (credits/month or mean rows under management). Both sort the
+    # same direction under either meter, and ticket 20 measured the two orderings at
+    # 0.1-0.2% discordance. They were `recurring_credits_desc` / `storage_credits_desc`
+    # until ticket 29; a key naming a unit the run may not be in is the thing that misleads.
+    order: [recurring_desc, storage_desc, days_stale_desc, candidate_id]
+    # Never-run objects have an UNDEFINED age, not an infinite one. They sort LAST within
+    # their cost tier and are reported as their own band. Treating undefined as maximally
+    # stale is ADR-0003's mistake run in reverse - it would put granite's 18 never-succeeded
+    # netsuite-jdbc datasets at the top of a list ordered by an age they do not have.
+    never_run_sorts: last
+
+  # Owner-grouped review: everything else, grouped so it produces conversations rather than
+  # rows. Owner first because six people hold 95% of granite's backlog and one of them holds
+  # 75% of it; age band within owner because "your 754 things dead over two years" is a bulk
+  # yes/no and "your 206 things dead since spring" is not.
+  batch:
+    group_by: [owner, band]
+
+  # Fixed, human-legible bands - NOT per-instance quantiles (see calibration.triage.bands).
+  # NINE bands, of which the first three are contradictions rather than durations.
+  # `never-landed` is FIRST, and the position is the decision (ticket 54). A dataset that has
+  # never held a row makes every later band's premise false - there is no freshness to read,
+  # no age to bucket, no shape worth comparing - so it is tested ahead of everything,
+  # `duplicated` included. Left later, `fresh-but-unread` took granite's
+  # `RAW | GTK Opportunity > Quote | Cycle Time`: a netsuite connector on a DAY schedule whose
+  # attempts SUCCEED, which has never landed a row, and which bills 30 credits/month to import
+  # nothing. That band reads the run ATTEMPT, and ticket 43's whole finding is that an attempt
+  # is not a landing. One word covers all 48 of granite's never-landed datasets - the 45 that
+  # never attempted a run and the 3 that attempted and landed nothing - rather than splitting
+  # the population by how it arrived. It is dataset-grain: a dataflow's landing is its
+  # outputs', so dataflows carry no `landing_history` and fall through to `never-run`.
+  # `fresh-but-unread` is deliberately not an age: it is a contradiction. An object refreshed
+  # INSIDE the stale window that still has no consumer is someone actively maintaining
+  # something nobody reads, which is the most interesting thing in the batch and would be
+  # invisible inside a "under six months" bucket. Granite run one: 54 of them, one refreshed
+  # the same day. `never-run` is a named band and never a null in the age sequence; since
+  # ticket 54 it is the DATAFLOW-grain statement, holding granite's 18 non-executing dataflows.
+  # `duplicated` is the THIRD band that is not an age, and it is forced rather than chosen: a
+  # duplicated candidate is fresh, consumed AND passing, so it has no age to band on and no
+  # co-occurring condition to inherit one from. It must be tested before any age rule - 20 of
+  # granite's 26 duplicated dataflows are also stale, and banding one of those by age would
+  # file the instance's largest single cost lever under `3yr-plus`.
+  bands:
+    - {key: never-landed,     landing_history: never}
+    - {key: fresh-but-unread, refreshed_within_stale_window: true}
+    - {key: duplicated,       condition: duplicated}
+    - {key: under-6mo,        from_days: 90,   to_days: 180}
+    - {key: 6-12mo,           from_days: 180,  to_days: 365}
+    - {key: 1-2yr,            from_days: 365,  to_days: 730}
+    - {key: 2-3yr,            from_days: 730,  to_days: 1095}
+    - {key: 3yr-plus,         from_days: 1095, to_days: null}
+    - {key: never-run,        run_history: absent}
+
+  # BACKLOG vs NEW DECAY. Derived, never stored and never a config mode. A candidate whose
+  # `first_seen_run_id` is the instance's BASELINE run - the one run whose `prior_run_id` is
+  # null - is backlog; anything first seen later is new decay. It follows entirely from state
+  # the findings file already carries, so it cannot drift out of sync with the runs.
+  #
+  # The stale window is applied IDENTICALLY on the baseline run and on every run after it.
+  # Widening it for the baseline was considered and rejected: ticket 07 requires `resolved`
+  # to be a positive observation that an asset no longer meets the condition, so if `stale`
+  # meant something different on run one than run two, an object could resolve purely because
+  # the definition moved under it - and the run-two diff would be measuring the config rather
+  # than the instance. One definition, two labels.
+  label_backlog: derived
+
+ledger:
+  # Append-only JSONL at instances/<instance>/cleanup/ledger.jsonl. The collector READS it and
+  # never writes it; only `python -m collector.verdict` appends. Current state is a fold,
+  # last-write-wins per candidate_id, ordered by POSITION IN THE FILE - never by the `at`
+  # timestamp, which can be hand-typed or clock-skewed.
+  # See .scratch/instance-cleanup-mvp/issues/07-ledger-format-and-diff.md.
+  path: "cleanup/ledger.jsonl"    # relative to instances/<instance>/
+
+  # A cycle is an absolute DATE, not a decrementing counter. Runs are on-demand, so three runs
+  # in one afternoon must not burn three cycles. At verdict time the CLI stamps
+  # suppress_until = verdict_at + (keep_for_now_cycles * cycle_days) and stores it, which also
+  # means changing these numbers never retroactively moves a grant already given.
+  keep_for_now_cycles: 3          # keep-permanent never re-surfaces; keep-for-now returns as `returned`
+  cycle_days: 30                  # collapses to a literal cycle once cadence.mode goes monthly
+
+  # ADR-0002's second stage. A quarantined asset leaves `candidates` and joins `watch_list`
+  # until this elapses. The collector reports elapsed time only - it has NO complaint signal and
+  # never asserts a quarantine period passed without complaint. Deliberately matches the stale
+  # window.
+  quarantine_period_days: 90
+
+  # Suppressed candidates stay in the findings file with ledger.suppressed true, carrying
+  # rank null so the actionable top-N has no holes. Their cost is reported as its own subtotal
+  # rather than folded into the headline, so a keep-permanent cannot quietly hide real spend.
+  suppressed_in_findings: true
+  suppressed_in_headline_totals: false
+
+cadence:
+  mode: on_demand               # on_demand for the MVP; monthly once the loop is proven
+  change_first: true            # lead with what changed since the prior run
+
+# RECONCILIATION - ticket 42. When a condition's population moves MATERIALLY between two runs,
+# the change report names the movement and says whether any input that can change an
+# `unconsumed` verdict - the dataflow-edge graph, the card-linkage aggregate, the dataset
+# enumeration's consumption signal - moved in the same run. The note records coincidence,
+# never cause, and suppresses nothing. Both floors below must clear; see calibration.
+reconciliation:
+  material_shift:
+    min_candidates: 20          # absolute floor: a one-off asset change never reaches it
+    min_pct: 5                  # relative floor: judged against the instance's own prior count
+
+cost_model:
+  # Cost is MEASURED, not modeled - and metered by one of TWO reports.
+  #
+  # Domo meters usage per entity, per day, per SKU. For an `executions-dataflow-*` SKU the
+  # entity is the OUTPUT DATASET, joining to `DOMO | Dataflow Details`.`Output Dataset ID`.
+  # Each output of a multi-output dataflow bills independently at the same execution count,
+  # so a partial saving is exactly measured rather than apportioned.
+  #
+  # `GP | Datastats | Credit Usage` (b80b173c-...) adds the credit conversion and is
+  # CUSTOMER-LEVEL - granite holds it because granite holds the contract.
+  # `GP | DomoStats | Usage Metrics` (14e10194-...) is the same meter PER INSTANCE, without
+  # credits, and 10 of 11 subsidiaries publish one. Same grain, same entity ids,
+  # byte-identical quantities.
+  #
+  # Verified 2026-08-27 / 2026-08-28 - see issues/06-cost-model.md and issues/20 and 29.
+  basis: metered-credits          # metered-credits | metered-executions | none
+                                  # RESOLVED BY PREFLIGHT at run time; this is the default
+                                  # for an instance nobody has probed yet.
+
+  window_days: 90                 # trailing window; deliberately matches conditions.stale.*
+
+  # ---- the credits basis: `Credit Usage`, skuId space -----------------------------------
+  # Which metered SKUs contribute to which saving. A quarantine stops executions; it does NOT
+  # stop storage, because a quarantined dataset's rows stay materialized and keep billing.
+  # Storage stops only on delete - a separate, later verdict.
+  saving_terms:
+    quarantine:
+      - "executions-dataflow-*"   # dataflow execution, metered per output dataset
+      - "executions-import-*"     # connector / workbench / api / other ingest, per dataset
+    delete_only:
+      - rows-materialized         # 1 credit per 1M rows; report as "additional if deleted"
+      - rows-virtual
+
+  # A hand-triggered run does not recur. Counting it overstates what the action recovers.
+  # Excluded from the recurring figure; reported separately as human-triggered spend.
+  exclude_categories: [manual]
+
+  # ---- the executions basis: `Usage Metrics`, DISPLAY-NAME space ------------------------
+  # The same two saving terms over the same SKU families, named the other way. These are
+  # separate keys and not one list doing double duty because `executions-dataflow-*` matches
+  # NOTHING in this space - and silently, producing a run where every recurring figure is
+  # zero with nothing saying why.
+  usage_saving_terms:
+    quarantine:
+      - "*DataFlow Execution"     # Magic ETL v2 / MySQL / ... - matches the credit space's
+                                  # executions-dataflow-*
+      - "*Import Execution"       # Connector / API / Other - matches executions-import-*
+                                  # Deliberately NOT "*Execution": `Workflow Task Completion`
+                                  # and `Workflow Start` are also metered in Executions and
+                                  # are not dataset entities.
+    delete_only:
+      # A STOCK, not a flow: the same rows are reported every day, so cost.py takes the MEAN
+      # over metered days rather than the sum. Reported in rows, never converted to credits.
+      - Domo Rows under Management        # == rows-materialized
+      - Virtual Rows under Management     # == rows-virtual
+      # NOT `Publish Rows under Management` (granite: 432 entities). It has no counterpart in
+      # the credit space at the dataset grain - `Credit Usage` bills publishing per
+      # SUBSCRIBER-day, not per dataset - so counting it here would make the storage term
+      # mean something different on the two bases. It lands in skus_outside_cleanup_surface.
+
+  # `Usage Metrics` has no `category` column. The legacy/standard split is simply gone - it
+  # moves the credit RATE, and on this basis there is no rate - while `manual` survives only
+  # as this suffix on the SKU display name.
+  usage_manual_suffix: " (Manual)"
+
+  # The coverage denominator is computed in ONE unit, because `Usage Quantity` is not
+  # summable across units: granite's window holds 57,455 Executions alongside 38.1 BILLION
+  # Rows. This is the unit the recurring figure is in.
+  usage_recurring_unit: Executions
+
+  # Candidates with a zero recurring saving are REPORTED, at zero - never dropped, never
+  # sorted to the top on cost. On granite this is the largest population in the pillar:
+  # of 458 output datasets under enabled dataflows, only 196 billed anything in 90 days.
+  report_zero_saving_candidates: true
+
+  # Integrity check, NOT a pass/fail gate. Attributed credits are legitimately a subset of the
+  # instance total - Jupyter, AI, workflow and publish spend sit outside the cleanup surface.
+  report_attributed_coverage: true
+  min_attributed_coverage_pct: 20   # below this, publish the ratio prominently; never fail
+
+  # There is NO rate-card fallback. It was deleted by ticket 29, not demoted:
+  #   * it never produced a figure - it prices an output-execution, and applying it needs a
+  #     run count FOR THE WINDOW, which the report roster does not carry (the counts in
+  #     `Dataflow Details` are lifetime);
+  #   * the windowed run count it needed turns out to exist, as `Usage Metrics`, on every
+  #     instance in the portfolio - so the case it existed for does not arise;
+  #   * and it predicts the one quantity that actually varies - credits consumed per
+  #     execution - 4.9x wrong across the portfolio at a single price (vector 0.2049 to
+  #     strongwell 0.9993) and 2.5x stale inside granite within twelve months.
+  # A parent-derived multiplier is refused for the same reason. An instance that can read
+  # neither meter reports `basis: none` and ranks on storage -> age -> id.
+
+reporting:
+  formats: [json]               # findings artifact of record; no second findings format
+  report_document: markdown     # human report, emitted only by `cleanup.py review --backlog`

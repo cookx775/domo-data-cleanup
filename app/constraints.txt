@@ -1,0 +1,30 @@
+# Dependency constraints for this build of the Domo instance cleanup package.
+#
+#     pip install --prefer-binary --find-links wheels -e . -c constraints.txt
+#
+# This is a RECORD OF ONE RESOLUTION, not a floor. It was resolved on:
+#     built     2026-10-16
+#     python    3.11.15 (CPython)
+#     platform  Darwin arm64
+#
+# The installers do not use it. A different Python minor version resolves a different
+# tree: some of these releases require a newer Python than the package's floor, and pip
+# backsolves to older ones there. On a newer Python, a pinned package with no binary
+# wheel for it is built from source; `--find-links wheels` supplies the pure-Python
+# builds shipped beside this file. If the constrained install fails on your
+# interpreter, install without `-c`. Your findings stay explainable either way: every
+# run file records the collector version that produced it, and that version is
+# stamped by this same build.
+
+attrs==26.1.0
+certifi==2026.7.22
+charset-normalizer==3.5.1
+idna==3.19
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+pyyaml==6.0.3
+referencing==0.37.0
+requests==2.34.2
+rpds-py==2026.6.3
+typing-extensions==4.16.0
+urllib3==2.7.0

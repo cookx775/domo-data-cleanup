@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "domo-cleanup"
+version = "0.1.11+build.20261016"
+requires-python = ">=3.10"
+dependencies = ["requests>=2.31", "PyYAML>=6.0", "jsonschema>=4.0"]
+
+# `collector` and `shared` are already siblings here, so no package-dir mapping is needed —
+# unlike the repo this was built from, where they live under two different roots.
+[tool.setuptools]
+packages = ["collector", "collector.pillars", "shared"]
+
+[tool.setuptools.package-data]
+collector = ["reports.yaml", "schema/*.json"]
+
